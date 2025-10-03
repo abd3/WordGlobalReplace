@@ -1,0 +1,35 @@
+#!/bin/bash
+# Git post-commit hook for WordGlobalReplace
+# This script runs after every commit to build and test the application
+
+echo "=========================================="
+echo "WordGlobalReplace - Post-Commit Build"
+echo "=========================================="
+
+# Get the project root directory
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$PROJECT_ROOT"
+
+# Check if we're on the main branch
+CURRENT_BRANCH=$(git branch --show-current)
+echo "Current branch: $CURRENT_BRANCH"
+
+# Only run full build on main branch or when explicitly requested
+if [ "$CURRENT_BRANCH" = "main" ] || [ "$1" = "--force" ]; then
+    echo "Running full build process..."
+    
+    # Run the local build script
+    python3 local_build.py --repo-url "https://github.com/$(git config --get remote.origin.url | sed 's/.*github.com[:/]\([^/]*\/[^/]*\)\.git.*/\1/')"
+    
+    if [ $? -eq 0 ]; then
+        echo "✅ Build completed successfully!"
+        echo "📦 Distribution created in dist/ directory"
+    else
+        echo "❌ Build failed!"
+        exit 1
+    fi
+else
+    echo "Skipping build (not on main branch). Use --force to build anyway."
+fi
+
+echo "=========================================="

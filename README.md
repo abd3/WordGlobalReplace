@@ -33,7 +33,7 @@ The application provides a clean, modern interface with:
 1. **Clone or download the application**:
    ```bash
    git clone <repository-url>
-   cd DewangGlobalReplace
+   cd WordGlobalReplace
    ```
 
 2. **Install dependencies**:
@@ -75,7 +75,7 @@ The application provides a clean, modern interface with:
 ## File Structure
 
 ```
-DewangGlobalReplace/
+WordGlobalReplace/
 ├── app.py                          # Main Flask application
 ├── word_processor.py              # Basic Word document processing
 ├── advanced_word_processor.py      # Enhanced processing with context
