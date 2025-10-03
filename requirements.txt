@@ -1,0 +1,21 @@
+# Global Word Document Find & Replace Application
+# Python dependencies
+
+# Core web framework
+Flask==2.3.3
+
+# Word document processing
+python-docx==0.8.11
+
+# Additional utilities
+pathlib2==2.3.7; python_version < "3.4"
+
+# Development dependencies (optional)
+# Uncomment these for development
+# pytest==7.4.2
+# pytest-flask==1.2.0
+# black==23.7.0
+# flake8==6.0.0
+
+
+
