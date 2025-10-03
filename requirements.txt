@@ -10,6 +10,9 @@ python-docx==0.8.11
 # Additional utilities
 pathlib2==2.3.7; python_version < "3.4"
 
+# Auto-updater dependencies
+requests==2.31.0
+
 # Development dependencies (optional)
 # Uncomment these for development
 # pytest==7.4.2
