@@ -405,13 +405,14 @@ class WordFindReplace {
 
     showStatus(message, type = 'info') {
         const statusDiv = document.getElementById('status-messages');
-        const statusClass = `status-${type}`;
+        const statusClass = `toast-${type}`;
         
         const statusElement = document.createElement('div');
-        statusElement.className = `status-message ${statusClass}`;
+        statusElement.className = `toast ${statusClass}`;
+        statusElement.setAttribute('role', 'alert');
         statusElement.innerHTML = `
-            <i class="fas fa-${this.getStatusIcon(type)}"></i>
-            ${message}
+            <span class="toast-icon"><i class="fas fa-${this.getStatusIcon(type)}"></i></span>
+            <div class="toast-message">${message}</div>
         `;
         
         statusDiv.appendChild(statusElement);
@@ -439,4 +440,3 @@ class WordFindReplace {
 document.addEventListener('DOMContentLoaded', () => {
     new WordFindReplace();
 });
-

@@ -149,7 +149,7 @@ header p {
     font-size: 14px;
 }
 
-/* Status Messages */
+/* Inline Status Messages */
 .status-message {
     padding: 10px 15px;
     border-radius: 6px;
@@ -157,6 +157,7 @@ header p {
     display: flex;
     align-items: center;
     gap: 8px;
+    font-weight: 500;
 }
 
 .status-message.success {
@@ -177,27 +178,70 @@ header p {
     border: 1px solid #ffeaa7;
 }
 
-.status-messages {
+/* Toast Notifications */
+.toast-container {
     position: fixed;
-    top: 20px;
-    right: 20px;
-    z-index: 1000;
-    max-width: 400px;
+    top: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: min(90vw, 420px);
+    z-index: 2000;
+    pointer-events: none;
 }
 
-.status-messages .status-message {
-    margin-bottom: 10px;
-    animation: slideIn 0.3s ease;
+.toast {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 16px 18px;
+    border-radius: 12px;
+    box-shadow: 0 18px 40px rgba(0,0,0,0.25);
+    backdrop-filter: blur(6px);
+    color: #fff;
+    font-weight: 600;
+    line-height: 1.4;
+    opacity: 0;
+    transform: translateY(-12px);
+    animation: toastIn 0.35s ease forwards;
 }
 
-@keyframes slideIn {
+.toast .toast-icon {
+    font-size: 1.3rem;
+    line-height: 1;
+}
+
+.toast .toast-message {
+    flex: 1;
+}
+
+.toast-success {
+    background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);
+}
+
+.toast-error {
+    background: linear-gradient(135deg, #ff6b6b 0%, #ee5253 100%);
+}
+
+.toast-warning {
+    background: linear-gradient(135deg, #f39c12 0%, #f1c40f 100%);
+    color: #1f2a3a;
+}
+
+.toast-info {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+@keyframes toastIn {
     from {
-        transform: translateX(100%);
         opacity: 0;
+        transform: translateY(-12px);
     }
     to {
-        transform: translateX(0);
         opacity: 1;
+        transform: translateY(0);
     }
 }
 
@@ -464,6 +508,4 @@ input:focus,
         border: 1px solid #ccc;
     }
 }
-
-
 
