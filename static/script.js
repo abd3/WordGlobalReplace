@@ -13,6 +13,10 @@ class WordFindReplace {
         // Search form events
         document.getElementById('search-btn').addEventListener('click', () => this.performSearch());
         document.getElementById('validate-dir-btn').addEventListener('click', () => this.validateDirectory());
+        const browseBtn = document.getElementById('browse-directory-btn');
+        if (browseBtn) {
+            browseBtn.addEventListener('click', () => this.openDirectoryPicker());
+        }
         
         // Results table events
         document.getElementById('select-all-btn').addEventListener('click', () => this.selectAll());
@@ -30,6 +34,40 @@ class WordFindReplace {
         // Global replace term should propagate to each row's replacement input
         const globalReplaceInput = document.getElementById('replace-term');
         globalReplaceInput.addEventListener('input', () => this.updateRowReplacementValues(globalReplaceInput.value));
+    }
+
+    async openDirectoryPicker() {
+        try {
+            const response = await fetch('/api/select_directory', {
+                method: 'POST'
+            });
+            const result = await response.json();
+
+            if (response.ok && result.success) {
+                const directoryInput = document.getElementById('directory');
+                directoryInput.value = result.directory;
+                this.showStatus(`Selected directory: ${result.directory}`, 'success');
+                await this.validateDirectory();
+            } else if (response.status === 503) {
+                this.disableBrowseButton('Folder picker unavailable; enter the path manually.');
+                this.showStatus('Folder picker is not available on this system. Enter the path manually.', 'warning');
+            } else if (result.error === 'Directory selection canceled') {
+                this.showStatus('Directory selection canceled', 'warning');
+            } else {
+                this.showStatus(result.error || 'Unable to select directory', 'error');
+            }
+        } catch (error) {
+            this.showStatus('Error opening directory picker', 'error');
+            this.disableBrowseButton('Folder picker unavailable; enter the path manually.');
+        }
+    }
+
+    disableBrowseButton(message) {
+        const browseBtn = document.getElementById('browse-directory-btn');
+        if (browseBtn) {
+            browseBtn.disabled = true;
+            browseBtn.title = message;
+        }
     }
 
     async validateDirectory() {
@@ -401,6 +439,4 @@ class WordFindReplace {
 document.addEventListener('DOMContentLoaded', () => {
     new WordFindReplace();
 });
-
-
 

@@ -5,12 +5,49 @@ Provides a web interface for finding and replacing text across Word documents
 """
 
 import os
+import sys
 import json
+import subprocess
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from pathlib import Path
 import logging
 from advanced_word_processor import AdvancedWordProcessor
 from config import DEFAULT_HOST, DEFAULT_PORT
+
+try:
+    import tkinter as tk
+    from tkinter import filedialog
+    TK_AVAILABLE = True
+    TK_ERROR = None
+except Exception as tk_exc:  # ImportError or TclError if DISPLAY missing
+    TK_AVAILABLE = False
+    TK_ERROR = str(tk_exc)
+
+
+def _select_directory_with_tk():
+    """Use tkinter's native dialog to choose a directory."""
+    root = tk.Tk()
+    root.withdraw()
+    root.update()
+    try:
+        return filedialog.askdirectory()
+    finally:
+        root.destroy()
+
+
+def _select_directory_with_applescript():
+    """Use AppleScript (Finder) to choose a folder on macOS."""
+    script = (
+        'set theFolder to choose folder with prompt "Select a directory for WordGlobalReplace"\n'
+        'POSIX path of theFolder'
+    )
+    result = subprocess.run(
+        ["osascript", "-e", script],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -185,6 +222,55 @@ def validate_directory():
             'error': str(e)
         })
 
+@app.route('/api/select_directory', methods=['POST'])
+def select_directory():
+    """Open a native directory picker and return the selected path"""
+    try:
+        strategies = []
+        errors = []
+
+        if TK_AVAILABLE:
+            strategies.append(('tkinter', _select_directory_with_tk))
+        elif TK_ERROR:
+            errors.append(f"tkinter unavailable: {TK_ERROR}")
+
+        if sys.platform == 'darwin':
+            strategies.append(('applescript', _select_directory_with_applescript))
+
+        if not strategies:
+            detail = '; '.join(errors) if errors else 'No directory picker strategy is available.'
+            raise RuntimeError(detail)
+
+        for name, strategy in strategies:
+            try:
+                directory = strategy()
+                if directory:
+                    return jsonify({'success': True, 'directory': directory})
+                return jsonify({'success': False, 'error': 'Directory selection canceled'}), 400
+            except subprocess.CalledProcessError as subproc_error:
+                stderr = subproc_error.stderr.strip()
+                stdout = subproc_error.stdout.strip()
+                message = stderr or stdout or str(subproc_error)
+                if 'User canceled' in message or 'User cancelled' in message:
+                    return jsonify({'success': False, 'error': 'Directory selection canceled'}), 400
+                errors.append(f"{name} failed: {message}")
+            except Exception as strategy_error:
+                errors.append(f"{name} failed: {strategy_error}")
+
+        raise RuntimeError('; '.join(errors))
+
+    except Exception as e:
+        logger.error(f"Error selecting directory: {e}")
+        status_code = 500
+        if isinstance(e, RuntimeError):
+            status_code = 503
+        elif TK_AVAILABLE and isinstance(e, tk.TclError):
+            status_code = 503
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), status_code
+
 @app.route('/static/<path:filename>')
 def static_files(filename):
     """Serve static files"""
@@ -198,5 +284,3 @@ if __name__ == '__main__':
     
     # Run the Flask app
     app.run(debug=True, host=DEFAULT_HOST, port=DEFAULT_PORT)
-
-
