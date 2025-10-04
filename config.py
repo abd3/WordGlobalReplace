@@ -8,3 +8,4 @@ DEFAULT_PORT = int(os.getenv("WORD_GLOBAL_REPLACE_PORT", "5130"))
 DEFAULT_REPO_URL = os.getenv("WORD_GLOBAL_REPLACE_REPO_URL", "https://github.com/abd3/WordGlobalReplace.git")
 
 DEFAULT_LOCAL_URL = f"http://localhost:{DEFAULT_PORT}"
+CF_BUNDLE_IDENTIFIER = "io.andrewdavis.WordGlobalReplace"
