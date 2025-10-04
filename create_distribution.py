@@ -76,6 +76,7 @@ class DistributionCreator:
             'word_processor.py', 
             'advanced_word_processor.py',
             'auto_updater.py',
+            'launcher.py',
             'config.py',
             'templates/',
             'static/',
@@ -149,11 +150,11 @@ def main():
         launcher.run(repo_url=distribution_repo_url or DEFAULT_REPO_URL, auto_update=True)
 
     except ImportError as exc:
-        print(f"Error importing launcher: {exc}")
+        print(f"Error importing launcher: {{exc}}")
         print("Please ensure all files are present in the application directory.")
         return 1
     except Exception as exc:
-        print(f"Error running application: {exc}")
+        print(f"Error running application: {{exc}}")
         return 1
 
     return 0
