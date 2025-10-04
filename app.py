@@ -10,6 +10,7 @@ from flask import Flask, render_template, request, jsonify, send_from_directory
 from pathlib import Path
 import logging
 from advanced_word_processor import AdvancedWordProcessor
+from config import DEFAULT_HOST, DEFAULT_PORT
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -196,7 +197,6 @@ if __name__ == '__main__':
     os.makedirs('backups', exist_ok=True)
     
     # Run the Flask app
-    app.run(debug=True, host='0.0.0.0', port=5000)
-
+    app.run(debug=True, host=DEFAULT_HOST, port=DEFAULT_PORT)
 
 

@@ -8,6 +8,8 @@ import sys
 import os
 from pathlib import Path
 
+from config import DEFAULT_REPO_URL
+
 def main():
     """Main startup function"""
     print("WordGlobalReplace - Starting...")
@@ -23,8 +25,8 @@ def main():
         launcher = WordGlobalReplaceLauncher()
         
         # You can configure the repository URL here for auto-updates
-        # Replace with your actual GitHub repository URL
-        repo_url = None  # Set to your GitHub repo URL, e.g., "https://github.com/abd3/WordGlobalReplace.git"
+        # Override DEFAULT_REPO_URL via WORD_GLOBAL_REPLACE_REPO_URL if needed
+        repo_url = DEFAULT_REPO_URL
         
         launcher.run(repo_url=repo_url, auto_update=True)
         

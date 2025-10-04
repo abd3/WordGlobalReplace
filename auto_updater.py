@@ -14,12 +14,14 @@ from pathlib import Path
 from datetime import datetime
 import logging
 
+from config import DEFAULT_REPO_URL
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class AutoUpdater:
-    def __init__(self, repo_url="https://github.com/abd3/WordGlobalReplace.git", 
+    def __init__(self, repo_url=DEFAULT_REPO_URL, 
                  current_dir=None, branch="main"):
         """
         Initialize the auto-updater

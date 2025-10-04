@@ -48,8 +48,9 @@ The application provides a clean, modern interface with:
 
 4. **Open your browser** and navigate to:
    ```
-   http://localhost:5000
+   http://localhost:5130
    ```
+   *(Use `WORD_GLOBAL_REPLACE_PORT` to change the port if needed.)*
 
 ## Usage
 
@@ -181,6 +182,5 @@ For issues or questions:
 2. Review the error messages in the application
 3. Check the browser console for JavaScript errors
 4. Verify all dependencies are installed correctly
-
 
 

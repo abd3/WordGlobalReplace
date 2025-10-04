@@ -12,6 +12,8 @@ import zipfile
 from pathlib import Path
 import logging
 
+from config import DEFAULT_LOCAL_URL, DEFAULT_REPO_URL
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -66,6 +68,7 @@ class DistributionCreator:
             'word_processor.py', 
             'advanced_word_processor.py',
             'auto_updater.py',
+            'config.py',
             'templates/',
             'static/',
             'Samples/'
@@ -105,9 +108,11 @@ def main():
     # Import and run the launcher
     try:
         from launcher import WordGlobalReplaceLauncher
+        from config import DEFAULT_REPO_URL
         
         launcher = WordGlobalReplaceLauncher()
-        launcher.run(repo_url="{repo_url or ''}", auto_update=True)
+        distribution_repo_url = "{repo_url or ''}"
+        launcher.run(repo_url=distribution_repo_url or DEFAULT_REPO_URL, auto_update=True)
         
     except ImportError as e:
         print(f"Error importing launcher: {{e}}")
@@ -173,7 +178,7 @@ A lightweight application for finding and replacing text across multiple Word do
 ## Usage
 
 1. Run the application: `python3 run.py`
-2. Open your browser to: http://localhost:5000
+2. Open your browser to: {DEFAULT_LOCAL_URL}
 3. Select a directory containing Word documents
 4. Enter search and replacement text
 5. Review matches and apply replacements
@@ -211,7 +216,7 @@ For issues and support, please check the GitHub repository or contact the develo
     
     def _create_installer_script(self, app_dir):
         """Create an installer script for easy setup"""
-        installer_content = '''#!/bin/bash
+        installer_content = f'''#!/bin/bash
 # WordGlobalReplace Installer Script
 
 echo "WordGlobalReplace Installer"
@@ -254,7 +259,7 @@ echo ""
 echo "To run the application:"
 echo "  python3 run.py"
 echo ""
-echo "The application will open in your browser at: http://localhost:5000"
+echo "The application will open in your browser at: {DEFAULT_LOCAL_URL}"
 '''
         
         installer_path = os.path.join(app_dir, "install.sh")

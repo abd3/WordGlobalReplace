@@ -7,6 +7,8 @@ import sys
 import os
 from pathlib import Path
 
+from config import DEFAULT_LOCAL_URL
+
 def test_imports():
     """Test if all required modules can be imported"""
     print("Testing imports...")
@@ -135,7 +137,7 @@ def main():
         print("✓ All tests passed! The application should work correctly.")
         print("\nTo run the application:")
         print("  python app.py")
-        print("Then open: http://localhost:5000")
+        print(f"Then open: {DEFAULT_LOCAL_URL}")
     else:
         print("✗ Some tests failed. Please check the errors above.")
         print("\nTo install missing dependencies:")
@@ -146,6 +148,5 @@ def main():
 if __name__ == "__main__":
     success = main()
     sys.exit(0 if success else 1)
-
 
 

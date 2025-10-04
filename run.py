@@ -8,6 +8,8 @@ import sys
 import subprocess
 from pathlib import Path
 
+from config import DEFAULT_HOST, DEFAULT_PORT, DEFAULT_LOCAL_URL
+
 def check_dependencies():
     """Check if required dependencies are installed"""
     try:
@@ -54,14 +56,14 @@ def main():
     os.makedirs('backups', exist_ok=True)
     
     print("Starting the application...")
-    print("Open your browser and go to: http://localhost:5000")
+    print(f"Open your browser and go to: {DEFAULT_LOCAL_URL}")
     print("Press Ctrl+C to stop the server")
     print("-" * 40)
     
     # Start the Flask application
     try:
         from app import app
-        app.run(debug=True, host='0.0.0.0', port=5000)
+        app.run(debug=True, host=DEFAULT_HOST, port=DEFAULT_PORT)
     except KeyboardInterrupt:
         print("\nApplication stopped.")
         return 0
@@ -71,6 +73,5 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-
 
 
