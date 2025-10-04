@@ -23,7 +23,7 @@ def test_auto_updater():
             
             # Create a test updater
             updater = AutoUpdater(
-                repo_url="https://github.com/yourusername/WordGlobalReplace.git",  # Replace with actual repo
+                repo_url="https://github.com/abd3/WordGlobalReplace.git",  # Replace with actual repo
                 current_dir=temp_dir,
                 branch="main"
             )

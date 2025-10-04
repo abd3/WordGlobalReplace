@@ -25,7 +25,7 @@ python3 create_distribution.py
 
 ```bash
 # Create distribution with auto-updates from GitHub
-python3 create_distribution.py --repo-url "https://github.com/yourusername/WordGlobalReplace.git"
+python3 create_distribution.py --repo-url "https://github.com/abd3/WordGlobalReplace.git"
 
 # This creates a dist/WordGlobalReplace.zip file with auto-update capability
 ```
@@ -73,7 +73,7 @@ WordGlobalReplace.app/
 1. **Set up GitHub repository** with your code
 2. **Create distribution** with your repo URL:
    ```bash
-   python3 create_distribution.py --repo-url "https://github.com/yourusername/WordGlobalReplace.git"
+   python3 create_distribution.py --repo-url "https://github.com/abd3/WordGlobalReplace.git"
    ```
 
 ### How Auto-Updates Work:
@@ -97,7 +97,7 @@ python3 test_auto_updater.py
 
 ```bash
 # Check for updates only
-python3 launcher.py --update-only --repo-url "https://github.com/yourusername/WordGlobalReplace.git"
+python3 launcher.py --update-only --repo-url "https://github.com/abd3/WordGlobalReplace.git"
 ```
 
 ## Distribution Features
@@ -133,7 +133,7 @@ repo_url = None  # Disables auto-updates
 
 Edit `start.py` and set:
 ```python
-repo_url = "https://github.com/yourusername/your-repo.git"
+repo_url = "https://github.com/abd3/your-repo.git"
 ```
 
 ### Manual Update Control:

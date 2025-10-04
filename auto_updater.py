@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class AutoUpdater:
-    def __init__(self, repo_url="https://github.com/yourusername/WordGlobalReplace.git", 
+    def __init__(self, repo_url="https://github.com/abd3/WordGlobalReplace.git", 
                  current_dir=None, branch="main"):
         """
         Initialize the auto-updater

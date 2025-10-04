@@ -24,7 +24,7 @@ def main():
         
         # You can configure the repository URL here for auto-updates
         # Replace with your actual GitHub repository URL
-        repo_url = None  # Set to your GitHub repo URL, e.g., "https://github.com/yourusername/WordGlobalReplace.git"
+        repo_url = None  # Set to your GitHub repo URL, e.g., "https://github.com/abd3/WordGlobalReplace.git"
         
         launcher.run(repo_url=repo_url, auto_update=True)
         

@@ -45,7 +45,7 @@ python3 ci_local.py --publish
 ### 3. GitHub Releases
 ```bash
 # Publish to GitHub releases
-python3 ci_local.py --repo-url "https://github.com/user/repo.git" --publish
+python3 ci_local.py --repo-url "https://github.com/abd3/WordGlobalReplace.git" --publish
 ```
 
 ## 📊 Comparison Table

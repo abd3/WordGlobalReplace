@@ -51,10 +51,10 @@ python3 setup_git_hooks.py
 
 ```bash
 # Run full build process
-python3 build.py --repo-url "https://github.com/yourusername/WordGlobalReplace.git"
+python3 build.py --repo-url "https://github.com/abd3/WordGlobalReplace.git"
 
 # Build with GitHub release publishing
-python3 build.py --repo-url "https://github.com/yourusername/WordGlobalReplace.git" --publish
+python3 build.py --repo-url "https://github.com/abd3/WordGlobalReplace.git" --publish
 ```
 
 ### 3. Local Development Build
@@ -196,10 +196,10 @@ The CI/CD pipeline:
 python3 build.py
 
 # Build with auto-update repository
-python3 build.py --repo-url "https://github.com/user/repo.git"
+python3 build.py --repo-url "https://github.com/abd3/WordGlobalReplace.git"
 
 # Build and publish to GitHub
-python3 build.py --repo-url "https://github.com/user/repo.git" --publish
+python3 build.py --repo-url "https://github.com/abd3/WordGlobalReplace.git" --publish
 
 # Skip tests (not recommended)
 python3 build.py --skip-tests
