@@ -12,7 +12,7 @@ import zipfile
 from pathlib import Path
 import logging
 
-from config import DEFAULT_LOCAL_URL, DEFAULT_REPO_URL
+from config import DEFAULT_LOCAL_URL, DEFAULT_REPO_URL, CF_BUNDLE_IDENTIFIER
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -33,24 +33,32 @@ class DistributionCreator:
             app_dir = os.path.join(self.output_dir, f"{self.app_name}.app")
             if os.path.exists(app_dir):
                 shutil.rmtree(app_dir)
-            
-            os.makedirs(app_dir, exist_ok=True)
-            
+
+            contents_dir = os.path.join(app_dir, "Contents")
+            macos_dir = os.path.join(contents_dir, "MacOS")
+            resources_dir = os.path.join(contents_dir, "Resources")
+
+            os.makedirs(macos_dir, exist_ok=True)
+            os.makedirs(resources_dir, exist_ok=True)
+
             # Copy application files
-            self._copy_application_files(app_dir)
-            
-            # Create launcher script
-            self._create_launcher_script(app_dir, repo_url)
-            
+            self._copy_application_files(resources_dir)
+
+            # Create Info.plist metadata
+            self._create_info_plist(contents_dir)
+
+            # Create launcher scripts
+            self._create_launcher_script(macos_dir, resources_dir, repo_url)
+
             # Create requirements file
-            self._create_requirements_file(app_dir)
-            
+            self._create_requirements_file(resources_dir)
+
             # Create README for distribution
-            self._create_distribution_readme(app_dir, repo_url)
-            
+            self._create_distribution_readme(resources_dir, repo_url)
+
             # Create installer script
-            self._create_installer_script(app_dir)
-            
+            self._create_installer_script(resources_dir)
+
             # Create zip package
             self._create_zip_package(app_dir)
             
@@ -61,7 +69,7 @@ class DistributionCreator:
             logger.error(f"Error creating distribution: {e}")
             return False
     
-    def _copy_application_files(self, app_dir):
+    def _copy_application_files(self, resources_dir):
         """Copy essential application files"""
         essential_files = [
             'app.py',
@@ -76,7 +84,7 @@ class DistributionCreator:
         
         for item in essential_files:
             src = os.path.join(self.source_dir, item)
-            dst = os.path.join(app_dir, item)
+            dst = os.path.join(resources_dir, item)
             
             if os.path.exists(src):
                 if os.path.isdir(src):
@@ -84,59 +92,97 @@ class DistributionCreator:
                 else:
                     shutil.copy2(src, dst)
                 logger.info(f"Copied {item}")
+
+    def _create_info_plist(self, contents_dir):
+        """Create the macOS Info.plist metadata file"""
+        plist_content = f'''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>{self.app_name}</string>
+    <key>CFBundleIdentifier</key>
+    <string>{CF_BUNDLE_IDENTIFIER}</string>
+    <key>CFBundleVersion</key>
+    <string>1.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleExecutable</key>
+    <string>{self.app_name}</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>10.14</string>
+</dict>
+</plist>
+'''
+
+        plist_path = os.path.join(contents_dir, "Info.plist")
+        with open(plist_path, 'w') as f:
+            f.write(plist_content)
+        logger.info("Created Info.plist")
     
-    def _create_launcher_script(self, app_dir, repo_url):
-        """Create the main launcher script"""
-        launcher_content = f'''#!/usr/bin/env python3
-"""
-WordGlobalReplace - Auto-updating launcher
-"""
+    def _create_launcher_script(self, macos_dir, resources_dir, repo_url):
+        """Create the main launcher scripts for the bundle"""
+        run_launcher_content = f'''#!/usr/bin/env python3
+"""WordGlobalReplace - Auto-updating launcher"""
 
 import os
 import sys
 import subprocess
 from pathlib import Path
 
+
 def main():
-    # Get the directory where this script is located
     app_dir = os.path.dirname(os.path.abspath(__file__))
     os.chdir(app_dir)
-    
-    # Add current directory to Python path
+
+    # Ensure bundled resources are importable
     sys.path.insert(0, app_dir)
-    
-    # Import and run the launcher
+
     try:
         from launcher import WordGlobalReplaceLauncher
         from config import DEFAULT_REPO_URL
-        
+
         launcher = WordGlobalReplaceLauncher()
         distribution_repo_url = "{repo_url or ''}"
         launcher.run(repo_url=distribution_repo_url or DEFAULT_REPO_URL, auto_update=True)
-        
-    except ImportError as e:
-        print(f"Error importing launcher: {{e}}")
+
+    except ImportError as exc:
+        print(f"Error importing launcher: {exc}")
         print("Please ensure all files are present in the application directory.")
         return 1
-    except Exception as e:
-        print(f"Error running application: {{e}}")
+    except Exception as exc:
+        print(f"Error running application: {exc}")
         return 1
-    
+
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())
 '''
-        
-        launcher_path = os.path.join(app_dir, "run.py")
-        with open(launcher_path, 'w') as f:
-            f.write(launcher_content)
-        
-        # Make it executable
-        os.chmod(launcher_path, 0o755)
-        logger.info("Created launcher script")
+
+        python_launcher_path = os.path.join(resources_dir, "run.py")
+        with open(python_launcher_path, 'w') as f:
+            f.write(run_launcher_content)
+        os.chmod(python_launcher_path, 0o755)
+        logger.info("Created Python launcher script")
+
+        mac_launcher_content = """#!/bin/bash
+APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+RESOURCE_DIR="$APP_DIR/Resources"
+cd "$RESOURCE_DIR"
+exec /usr/bin/env python3 run.py "$@"
+"""
+
+        mac_launcher_path = os.path.join(macos_dir, self.app_name)
+        with open(mac_launcher_path, 'w') as f:
+            f.write(mac_launcher_content)
+        os.chmod(mac_launcher_path, 0o755)
+        logger.info("Created macOS launcher executable")
     
-    def _create_requirements_file(self, app_dir):
+    def _create_requirements_file(self, resources_dir):
         """Create a requirements file for the distribution"""
         requirements_content = '''# WordGlobalReplace - Python Dependencies
 # Core web framework
@@ -149,12 +195,12 @@ python-docx==0.8.11
 pathlib2==2.3.7; python_version < "3.4"
 '''
         
-        req_path = os.path.join(app_dir, "requirements.txt")
+        req_path = os.path.join(resources_dir, "requirements.txt")
         with open(req_path, 'w') as f:
             f.write(requirements_content)
         logger.info("Created requirements file")
     
-    def _create_distribution_readme(self, app_dir, repo_url):
+    def _create_distribution_readme(self, resources_dir, repo_url):
         """Create README for the distribution"""
         readme_content = f'''# WordGlobalReplace
 
@@ -209,18 +255,20 @@ If you encounter issues:
 For issues and support, please check the GitHub repository or contact the developer.
 '''
         
-        readme_path = os.path.join(app_dir, "README.md")
+        readme_path = os.path.join(resources_dir, "README.md")
         with open(readme_path, 'w') as f:
             f.write(readme_content)
         logger.info("Created distribution README")
     
-    def _create_installer_script(self, app_dir):
+    def _create_installer_script(self, resources_dir):
         """Create an installer script for easy setup"""
         installer_content = f'''#!/bin/bash
 # WordGlobalReplace Installer Script
 
 echo "WordGlobalReplace Installer"
 echo "=========================="
+
+cd "$(dirname "$0")"
 
 # Check if Python 3 is installed
 if ! command -v python3 &> /dev/null; then
@@ -257,12 +305,12 @@ echo ""
 echo "Installation completed successfully!"
 echo ""
 echo "To run the application:"
-echo "  python3 run.py"
+echo "  open ../.."
 echo ""
 echo "The application will open in your browser at: {DEFAULT_LOCAL_URL}"
 '''
         
-        installer_path = os.path.join(app_dir, "install.sh")
+        installer_path = os.path.join(resources_dir, "install.sh")
         with open(installer_path, 'w') as f:
             f.write(installer_content)
         
@@ -301,8 +349,9 @@ def main():
         print(f"Output directory: {args.output_dir}")
         print(f"\\nTo distribute:")
         print(f"1. Share the {args.output_dir}/WordGlobalReplace.zip file")
-        print(f"2. Recipients should extract and run ./install.sh")
-        print(f"3. Then run: python3 run.py")
+        print("2. Recipients should extract and copy WordGlobalReplace.app to their Applications folder (or another preferred location)")
+        print("3. Optional: run ./WordGlobalReplace.app/Contents/Resources/install.sh to pre-install dependencies")
+        print("4. Launch the app by double-clicking WordGlobalReplace.app or running: open WordGlobalReplace.app")
     else:
         print("Failed to create distribution")
         return 1
