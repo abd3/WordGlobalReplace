@@ -215,6 +215,9 @@ header p {
 
 .toast .toast-message {
     flex: 1;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
 .toast-success {
@@ -508,4 +511,3 @@ input:focus,
         border: 1px solid #ccc;
     }
 }
-
