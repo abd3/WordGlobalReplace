@@ -146,11 +146,10 @@ def main():
     else:
         print("✗ Some tests failed. Please check the errors above.")
         print("\nTo install missing dependencies:")
-        print("  pip install -r requirements.txt")
+        print("  python3 -m pip install --user -r requirements.txt")
     
     return all_passed
 
 if __name__ == "__main__":
     success = main()
     sys.exit(0 if success else 1)
-

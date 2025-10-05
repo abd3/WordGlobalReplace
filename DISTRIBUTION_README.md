@@ -156,7 +156,7 @@ python3 run.py --update-only
 
 1. **Python not found**: Ensure Python 3.7+ is installed
 2. **Permission denied**: Run `chmod +x install.sh` and `chmod +x run.py`
-3. **Dependencies fail**: Check internet connection and try `pip install -r requirements.txt`
+3. **Dependencies fail**: Check internet connection and try `python3 -m pip install --user -r requirements.txt`
 4. **Update fails**: Check repository URL and internet connection
 
 ### Debug Mode:

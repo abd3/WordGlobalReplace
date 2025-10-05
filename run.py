@@ -38,7 +38,7 @@ def main():
         print("Dependencies not found. Installing...")
         if not install_dependencies():
             print("Failed to install dependencies. Please run:")
-            print("  pip install -r requirements.txt")
+            print("  python3 -m pip install --user -r requirements.txt")
             return 1
         print("Dependencies installed successfully!")
     
@@ -73,5 +73,4 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-
 

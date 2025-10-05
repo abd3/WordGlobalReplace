@@ -241,7 +241,7 @@ export GITHUB_REPO="owner/repository"
 
 ```bash
 # Install dependencies
-pip install -r requirements.txt
+python3 -m pip install --user -r requirements.txt
 
 # Install development dependencies
 pip install pytest pytest-cov flake8 coverage

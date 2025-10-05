@@ -247,7 +247,7 @@ The application will automatically check for updates when launched and update it
 If you encounter issues:
 
 1. Ensure Python 3.7+ is installed
-2. Check that all dependencies are installed: `pip install -r requirements.txt`
+2. Check that all dependencies are installed: `python3 -m pip install --user -r requirements.txt`
 3. Verify the application directory has write permissions
 4. Check the console output for error messages
 
@@ -290,7 +290,7 @@ echo "Python version: $python_version ✓"
 
 # Install dependencies
 echo "Installing dependencies..."
-python3 -m pip install -r requirements.txt
+python3 -m pip install --user -r requirements.txt
 
 if [ $? -eq 0 ]; then
     echo "Dependencies installed successfully ✓"

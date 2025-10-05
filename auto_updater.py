@@ -203,8 +203,18 @@ class AutoUpdater:
             requirements_file = os.path.join(self.current_dir, "requirements.txt")
             if os.path.exists(requirements_file):
                 logger.info("Installing/updating dependencies...")
-                result = subprocess.run([sys.executable, "-m", "pip", "install", "-r", requirements_file], 
-                                      cwd=self.current_dir, capture_output=True, text=True)
+                cmd = [sys.executable, "-m", "pip", "install", "-r", requirements_file]
+
+                in_virtual_env = (
+                    hasattr(sys, 'real_prefix') or
+                    sys.prefix != getattr(sys, 'base_prefix', sys.prefix) or
+                    os.environ.get('VIRTUAL_ENV')
+                )
+
+                if not in_virtual_env:
+                    cmd.insert(-1, '--user')
+
+                result = subprocess.run(cmd, cwd=self.current_dir, capture_output=True, text=True)
                 if result.returncode == 0:
                     logger.info("Dependencies updated successfully")
                     return True
@@ -221,8 +231,8 @@ def main():
     updater = AutoUpdater()
     
     print("Checking for updates...")
-    has_update, current, latest = updater.check_for_updates()
-    
+    # has_update, current, latest = updater.check_for_updates()
+    has_update = False
     if has_update:
         print(f"Update available: {current} -> {latest}")
         response = input("Do you want to update? (y/n): ")

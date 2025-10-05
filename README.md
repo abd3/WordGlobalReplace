@@ -38,7 +38,7 @@ The application provides a clean, modern interface with:
 
 2. **Install dependencies**:
    ```bash
-   pip install -r requirements.txt
+   python3 -m pip install --user -r requirements.txt
    ```
 
 3. **Run the application**:
@@ -182,5 +182,4 @@ For issues or questions:
 2. Review the error messages in the application
 3. Check the browser console for JavaScript errors
 4. Verify all dependencies are installed correctly
-
 

@@ -45,7 +45,8 @@ class WordGlobalReplaceLauncher:
         
         try:
             logger.info("Checking for updates...")
-            has_update, current, latest = self.auto_updater.check_for_updates()
+            # has_update, current, latest = self.auto_updater.check_for_updates()
+            has_update=False
             
             if has_update:
                 logger.info(f"Update available: {current} -> {latest}")
@@ -89,8 +90,18 @@ class WordGlobalReplaceLauncher:
             requirements_file = os.path.join(self.app_dir, "requirements.txt")
             if os.path.exists(requirements_file):
                 logger.info("Installing dependencies...")
-                result = subprocess.run([sys.executable, "-m", "pip", "install", "-r", requirements_file], 
-                                      cwd=self.app_dir, capture_output=True, text=True)
+                cmd = [sys.executable, "-m", "pip", "install", "-r", requirements_file]
+
+                in_virtual_env = (
+                    hasattr(sys, 'real_prefix') or
+                    sys.prefix != getattr(sys, 'base_prefix', sys.prefix) or
+                    os.environ.get('VIRTUAL_ENV')
+                )
+
+                if not in_virtual_env:
+                    cmd.insert(-1, '--user')
+
+                result = subprocess.run(cmd, cwd=self.app_dir, capture_output=True, text=True)
                 if result.returncode == 0:
                     logger.info("Dependencies installed successfully")
                     return True
