@@ -21,11 +21,14 @@ WordGlobalReplace/
 ├── setup_git_hooks.py         # Git hooks setup
 ├── scripts/
 │   └── post-commit            # Git post-commit hook
-├── tests/                     # Unit tests
+├── tests/                     # Automated and manual tests
 │   ├── test_word_processor.py
 │   ├── test_advanced_word_processor.py
 │   ├── test_auto_updater.py
-│   └── test_app.py
+│   ├── test_app.py
+│   └── manual/
+│       ├── auto_updater_check.py
+│       └── setup_check.py
 ├── .github/workflows/
 │   └── build.yml              # GitHub Actions workflow
 ├── build/                     # Build artifacts (ignored by git)

@@ -89,8 +89,8 @@ WordGlobalReplace.app/
 ### Test Auto-Updater:
 
 ```bash
-# Run the test suite
-python3 test_auto_updater.py
+# Run the manual auto-updater check
+python3 tests/manual/auto_updater_check.py
 ```
 
 ### Test Manual Update:
