@@ -90,7 +90,7 @@ class WordGlobalReplaceLauncher:
             requirements_file = os.path.join(self.app_dir, "requirements.txt")
             if os.path.exists(requirements_file):
                 logger.info("Installing dependencies...")
-                cmd = [sys.executable, "-m", "pip", "install", "-r", requirements_file]
+                cmd = [sys.executable, "-m", "pip", "install"]
 
                 in_virtual_env = (
                     hasattr(sys, 'real_prefix') or
@@ -99,7 +99,9 @@ class WordGlobalReplaceLauncher:
                 )
 
                 if not in_virtual_env:
-                    cmd.insert(-1, '--user')
+                    cmd.append('--user')
+
+                cmd.extend(["-r", requirements_file])
 
                 result = subprocess.run(cmd, cwd=self.app_dir, capture_output=True, text=True)
                 if result.returncode == 0:

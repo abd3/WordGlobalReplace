@@ -199,41 +199,55 @@ if __name__ == "__main__":
         logger.info("Created Python launcher script")
 
         mac_launcher_content = """#!/bin/bash
-APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-RESOURCE_DIR="$APP_DIR/Resources"
-LOG_DIR="${HOME}/Library/Logs/WordGlobalReplace"
-LOG_FILE="$LOG_DIR/launcher.log"
-VENV_PY="$RESOURCE_DIR/venv/bin/python3"
-FALLBACK_PY="$RESOURCE_DIR/venv/bin/python"
+APP_DIR=\"$(cd \"$(dirname \"$0\")/..\" && pwd)\"
+RESOURCE_DIR=\"$APP_DIR/Resources\"
+LOG_DIR=\"${HOME}/Library/Logs/WordGlobalReplace\"
+LOG_FILE=\"$LOG_DIR/launcher.log\"
+VENV_PY=\"$RESOURCE_DIR/venv/bin/python3\"
+FALLBACK_PY=\"$RESOURCE_DIR/venv/bin/python\"
 
-mkdir -p "$LOG_DIR"
+mkdir -p \"$LOG_DIR\"
 
 if [ ! -t 1 ]; then
-    exec >>"$LOG_FILE" 2>&1
+    exec >>\"$LOG_FILE\" 2>&1
 fi
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting WordGlobalReplace launcher"
+timestamp() {
+    date '+%Y-%m-%d %H:%M:%S'
+}
+
+echo \"[$(timestamp)] Starting WordGlobalReplace launcher\"
 
 export PYTHONUNBUFFERED=1
-export PYTHONPATH="$RESOURCE_DIR:${PYTHONPATH:-}"
-export DYLD_FRAMEWORK_PATH="$RESOURCE_DIR:${DYLD_FRAMEWORK_PATH:-}"
+export PYTHONPATH=\"$RESOURCE_DIR:${PYTHONPATH:-}\"
+export DYLD_FRAMEWORK_PATH=\"$RESOURCE_DIR:${DYLD_FRAMEWORK_PATH:-}\"
 
-cd "$RESOURCE_DIR"
+cd \"$RESOURCE_DIR\"
 
-PY_EXEC=""
+run_with_interpreter() {
+    local interpreter=\"$1\"
+    shift
+    if [ ! -x \"$interpreter\" ]; then
+        return 127
+    fi
 
-if [ -x "$VENV_PY" ]; then
-    PY_EXEC="$VENV_PY"
-elif [ -x "$FALLBACK_PY" ]; then
-    PY_EXEC="$FALLBACK_PY"
-else
-    echo "Bundled Python not found; using system Python." 1>&2
-    PY_EXEC="/usr/bin/env python3"
+    echo \"[$(timestamp)] Launching with interpreter: $interpreter\"
+    PYTHONEXECUTABLE=\"$interpreter\" \"$interpreter\" run.py \"$@\"
+}
+
+if run_with_interpreter \"$VENV_PY\" \"$@\"; then
+    exit 0
 fi
 
-export PYTHONEXECUTABLE="$PY_EXEC"
+if run_with_interpreter \"$FALLBACK_PY\" \"$@\"; then
+    exit 0
+fi
 
-exec "$PY_EXEC" run.py "$@"
+echo \"[$(timestamp)] Bundled interpreter failed; falling back to system python\" 1>&2
+unset DYLD_FRAMEWORK_PATH
+unset PYTHONEXECUTABLE
+
+exec /usr/bin/env python3 run.py \"$@\"
 """
 
         mac_launcher_path = os.path.join(macos_dir, self.app_name)
@@ -268,11 +282,32 @@ pathlib2==2.3.7; python_version < "3.4"
 
         logger.info("Creating bundled virtual environment")
         python_executable = sys.executable
+        created_with_copies = True
         try:
-            venv_cmd = [python_executable, '-m', 'venv', '--copies', str(venv_path)]
-            subprocess.run(venv_cmd, check=True)
+            try:
+                subprocess.run(
+                    [python_executable, '-m', 'venv', '--copies', str(venv_path)],
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True
+                )
+            except subprocess.CalledProcessError as exc:
+                err_output = exc.stderr
+                logger.warning(
+                    "Creating venv with --copies failed; attempting standard venv. Details: %s",
+                    err_output.strip() if err_output else exc
+                )
+                subprocess.run(
+                    [python_executable, '-m', 'venv', str(venv_path)],
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True
+                )
+                created_with_copies = False
         except subprocess.CalledProcessError as exc:
-            raise RuntimeError(f"Failed to create virtual environment: {exc}")
+            raise RuntimeError(f"Failed to create virtual environment: {exc}") from exc
 
         if os.name == 'nt':
             scripts_dir = venv_path / 'Scripts'
@@ -292,6 +327,10 @@ pathlib2==2.3.7; python_version < "3.4"
         except subprocess.CalledProcessError as exc:
             raise RuntimeError(f"Failed to install dependencies into bundled environment: {exc}")
 
+        if not created_with_copies:
+            logger.info("Ensuring interpreter binaries are copied after symlink-based venv creation")
+        self._solidify_python_binaries(venv_path)
+
         self._bundle_python_runtime(venv_path, resources_dir)
         logger.info("Bundled virtual environment ready")
 
@@ -301,16 +340,30 @@ pathlib2==2.3.7; python_version < "3.4"
             logger.debug("Non-macOS platform detected; skipping Python framework bundling")
             return
 
-        framework_name = sysconfig.get_config_var('PYTHONFRAMEWORK')
-        framework_prefix = sysconfig.get_config_var('PYTHONFRAMEWORKPREFIX')
+        framework_name = sysconfig.get_config_var('PYTHONFRAMEWORK') or "Python"
 
-        if not framework_name or not framework_prefix:
-            logger.warning("Python framework metadata unavailable; bundled interpreter may require system Python")
-            return
+        candidate_paths = []
 
-        source_framework = Path(framework_prefix) / f"{framework_name}.framework"
-        if not source_framework.exists():
-            logger.warning(f"Python framework not found at expected location: {source_framework}")
+        cfg_prefix = sysconfig.get_config_var('PYTHONFRAMEWORKPREFIX')
+        if cfg_prefix:
+            candidate_paths.append(Path(cfg_prefix) / f"{framework_name}.framework")
+
+        base_prefix = getattr(sys, 'base_prefix', '') or getattr(sys, 'prefix', '')
+        if base_prefix:
+            bp = Path(base_prefix)
+            # base_prefix typically ends with .../Python.framework/Versions/X.Y
+            candidate_paths.append(bp.parent.parent)
+
+        source_framework = None
+        for candidate in candidate_paths:
+            if candidate.exists():
+                source_framework = candidate
+                break
+        if source_framework is None:
+            logger.warning(
+                "Unable to locate Python framework (checked: %s); bundled interpreter may require system Python",
+                ", ".join(str(p) for p in candidate_paths) or "none"
+            )
             return
 
         destination = Path(resources_dir) / f"{framework_name}.framework"
@@ -318,7 +371,36 @@ pathlib2==2.3.7; python_version < "3.4"
             shutil.rmtree(destination)
 
         logger.info(f"Copying Python framework to bundle: {source_framework} -> {destination}")
-        shutil.copytree(source_framework, destination, symlinks=True)
+        shutil.copytree(source_framework, destination, symlinks=False)
+
+        # Ensure site-packages directory exists so relative symlinks remain valid even if source omitted it
+        version_dir = destination / "Versions" / f"{sys.version_info.major}.{sys.version_info.minor}"
+        site_packages = version_dir / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
+        site_packages.mkdir(parents=True, exist_ok=True)
+
+    def _solidify_python_binaries(self, venv_path: Path):
+        """Replace symlinked python binaries with physical copies for relocation safety"""
+        if os.name == 'nt':
+            return  # Windows virtualenv already copies executables
+
+        bin_dir = venv_path / 'bin'
+        if not bin_dir.exists():
+            return
+
+        binaries = ['python', 'python3']
+        for name in binaries:
+            bin_path = bin_dir / name
+            if not bin_path.exists() or not bin_path.is_symlink():
+                continue
+
+            target = bin_path.resolve()
+            try:
+                bin_path.unlink()
+                shutil.copy2(target, bin_path)
+                bin_path.chmod(0o755)
+                logger.info(f"Replaced symlinked interpreter with copy: {bin_path}")
+            except Exception as exc:
+                logger.warning(f"Failed to solidify interpreter {bin_path}: {exc}")
     
     def _create_distribution_readme(self, resources_dir, repo_url):
         """Create README for the distribution"""
