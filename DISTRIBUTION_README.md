@@ -156,8 +156,13 @@ python3 run.py --update-only
 
 1. **Python not found**: Ensure Python 3.7+ is installed
 2. **Permission denied**: Run `chmod +x install.sh` and `chmod +x run.py`
-3. **Dependencies fail**: Check internet connection and try `python3 -m pip install --user -r requirements.txt`
+3. **App doesn't launch**: Try opening via `open -a Terminal WordGlobalReplace.app` to view logs
 4. **Update fails**: Check repository URL and internet connection
+
+### Log Files:
+Every session writes to:
+`~/Library/Logs/WordGlobalReplace/application.log`
+The shell stub redirects stdout/stderr to launcher.log when there’s no terminal attached
 
 ### Debug Mode:
 
@@ -165,6 +170,9 @@ Enable detailed logging by editing `launcher.py`:
 ```python
 logging.basicConfig(level=logging.DEBUG)
 ```
+
+### Bundled Python:
+The virtual-environment builder copies the full Python.framework into Contents/Resources, enabling the app to run on machines without a preinstalled Python, and adjusts the README/install helper to reflect the bundled runtime. macOS launches pick up that framework via `DYLD_FRAMEWORK_PATH`.
 
 ## File Structure
 

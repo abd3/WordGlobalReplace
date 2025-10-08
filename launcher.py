@@ -15,7 +15,7 @@ import logging
 from config import DEFAULT_HOST, DEFAULT_PORT, DEFAULT_LOCAL_URL, DEFAULT_REPO_URL
 
 # Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class WordGlobalReplaceLauncher:

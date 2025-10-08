@@ -342,11 +342,19 @@ header p {
 }
 
 .highlight {
-    background: #ffeb3b;
     padding: 2px 4px;
     border-radius: 3px;
-    font-weight: bold;
-    color: #d32f2f;
+    font-weight: 600;
+}
+
+.highlight-original {
+    background: #ffec8b;
+    color: #855400;
+}
+
+.highlight-replaced {
+    background: rgba(46, 204, 113, 0.35);
+    color: #0f5c45;
 }
 
 .replacement-cell {
@@ -366,6 +374,11 @@ header p {
     outline: none;
     border-color: #667eea;
     box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.1);
+}
+
+tr.row-replaced {
+    background: rgba(46, 204, 113, 0.12);
+    transition: background 0.35s ease;
 }
 
 /* Checkbox Styles */

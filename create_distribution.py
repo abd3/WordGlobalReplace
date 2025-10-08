@@ -11,6 +11,7 @@ import subprocess
 import zipfile
 from pathlib import Path
 import logging
+import sysconfig
 
 from config import DEFAULT_LOCAL_URL, DEFAULT_REPO_URL, CF_BUNDLE_IDENTIFIER
 
@@ -52,6 +53,9 @@ class DistributionCreator:
 
             # Create requirements file
             self._create_requirements_file(resources_dir)
+
+            # Create bundled virtual environment
+            self._create_virtual_environment(resources_dir)
 
             # Create README for distribution
             self._create_distribution_readme(resources_dir, repo_url)
@@ -132,6 +136,7 @@ import os
 import sys
 import subprocess
 from pathlib import Path
+import logging
 
 
 def main():
@@ -140,6 +145,29 @@ def main():
 
     # Ensure bundled resources are importable
     sys.path.insert(0, app_dir)
+
+    log_dir = Path.home() / "Library" / "Logs" / "WordGlobalReplace"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "application.log"
+
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+
+    # Clear existing handlers to avoid duplicate logging if run multiple times
+    for handler in list(root_logger.handlers):
+        root_logger.removeHandler(handler)
+
+    file_handler = logging.FileHandler(log_file, mode="a")
+    file_handler.setFormatter(formatter)
+    root_logger.addHandler(file_handler)
+
+    if sys.stdout is not None:
+        stream_handler = logging.StreamHandler(sys.stdout)
+        stream_handler.setFormatter(formatter)
+        root_logger.addHandler(stream_handler)
+
+    root_logger.info("Launcher started; log file: %s", log_file)
 
     try:
         from launcher import WordGlobalReplaceLauncher
@@ -173,8 +201,39 @@ if __name__ == "__main__":
         mac_launcher_content = """#!/bin/bash
 APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 RESOURCE_DIR="$APP_DIR/Resources"
+LOG_DIR="${HOME}/Library/Logs/WordGlobalReplace"
+LOG_FILE="$LOG_DIR/launcher.log"
+VENV_PY="$RESOURCE_DIR/venv/bin/python3"
+FALLBACK_PY="$RESOURCE_DIR/venv/bin/python"
+
+mkdir -p "$LOG_DIR"
+
+if [ ! -t 1 ]; then
+    exec >>"$LOG_FILE" 2>&1
+fi
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting WordGlobalReplace launcher"
+
+export PYTHONUNBUFFERED=1
+export PYTHONPATH="$RESOURCE_DIR:${PYTHONPATH:-}"
+export DYLD_FRAMEWORK_PATH="$RESOURCE_DIR:${DYLD_FRAMEWORK_PATH:-}"
+
 cd "$RESOURCE_DIR"
-exec /usr/bin/env python3 run.py "$@"
+
+PY_EXEC=""
+
+if [ -x "$VENV_PY" ]; then
+    PY_EXEC="$VENV_PY"
+elif [ -x "$FALLBACK_PY" ]; then
+    PY_EXEC="$FALLBACK_PY"
+else
+    echo "Bundled Python not found; using system Python." 1>&2
+    PY_EXEC="/usr/bin/env python3"
+fi
+
+export PYTHONEXECUTABLE="$PY_EXEC"
+
+exec "$PY_EXEC" run.py "$@"
 """
 
         mac_launcher_path = os.path.join(macos_dir, self.app_name)
@@ -200,6 +259,66 @@ pathlib2==2.3.7; python_version < "3.4"
         with open(req_path, 'w') as f:
             f.write(requirements_content)
         logger.info("Created requirements file")
+
+    def _create_virtual_environment(self, resources_dir):
+        """Create a self-contained virtual environment with dependencies"""
+        venv_path = Path(resources_dir) / 'venv'
+        if venv_path.exists():
+            shutil.rmtree(venv_path)
+
+        logger.info("Creating bundled virtual environment")
+        python_executable = sys.executable
+        try:
+            venv_cmd = [python_executable, '-m', 'venv', '--copies', str(venv_path)]
+            subprocess.run(venv_cmd, check=True)
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(f"Failed to create virtual environment: {exc}")
+
+        if os.name == 'nt':
+            scripts_dir = venv_path / 'Scripts'
+            python_bin = scripts_dir / 'python.exe'
+            pip_bin = scripts_dir / 'pip.exe'
+        else:
+            scripts_dir = venv_path / 'bin'
+            python_bin = scripts_dir / 'python'
+            pip_bin = scripts_dir / 'pip'
+
+        try:
+            subprocess.run([str(python_bin), '-m', 'pip', 'install', '--upgrade', 'pip'], check=True)
+            subprocess.run(
+                [str(pip_bin), 'install', '--no-cache-dir', '-r', str(Path(resources_dir) / 'requirements.txt')],
+                check=True
+            )
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(f"Failed to install dependencies into bundled environment: {exc}")
+
+        self._bundle_python_runtime(venv_path, resources_dir)
+        logger.info("Bundled virtual environment ready")
+
+    def _bundle_python_runtime(self, venv_path: Path, resources_dir: str):
+        """Copy the Python framework into the bundle so the app runs without a system Python"""
+        if sys.platform != "darwin":
+            logger.debug("Non-macOS platform detected; skipping Python framework bundling")
+            return
+
+        framework_name = sysconfig.get_config_var('PYTHONFRAMEWORK')
+        framework_prefix = sysconfig.get_config_var('PYTHONFRAMEWORKPREFIX')
+
+        if not framework_name or not framework_prefix:
+            logger.warning("Python framework metadata unavailable; bundled interpreter may require system Python")
+            return
+
+        source_framework = Path(framework_prefix) / f"{framework_name}.framework"
+        if not source_framework.exists():
+            logger.warning(f"Python framework not found at expected location: {source_framework}")
+            return
+
+        destination = Path(resources_dir) / f"{framework_name}.framework"
+        if destination.exists():
+            shutil.rmtree(destination)
+
+        logger.info(f"Copying Python framework to bundle: {source_framework} -> {destination}")
+        shutil.copytree(source_framework, destination, symlinks=True)
     
     def _create_distribution_readme(self, resources_dir, repo_url):
         """Create README for the distribution"""
@@ -218,13 +337,13 @@ A lightweight application for finding and replacing text across multiple Word do
 
 ## Installation
 
-1. Ensure Python 3.7+ is installed on your system
-2. Run the installer script: `./install.sh`
-3. Or run directly: `python3 run.py`
+1. Extract the archive and copy `WordGlobalReplace.app` to your Applications folder (or preferred location)
+2. Double-click the app to launch it
+3. Optionally run `./install.sh` for quick usage instructions
 
 ## Usage
 
-1. Run the application: `python3 run.py`
+1. Launch the application by opening `WordGlobalReplace.app`
 2. Open your browser to: {DEFAULT_LOCAL_URL}
 3. Select a directory containing Word documents
 4. Enter search and replacement text
@@ -238,18 +357,16 @@ The application will automatically check for updates when launched and update it
 
 ## Requirements
 
-- Python 3.7 or higher
-- Internet connection (for auto-updates)
 - macOS (tested on macOS 10.14+)
+- Internet connection (for auto-updates)
 
 ## Troubleshooting
 
 If you encounter issues:
 
-1. Ensure Python 3.7+ is installed
-2. Check that all dependencies are installed: `python3 -m pip install --user -r requirements.txt`
-3. Verify the application directory has write permissions
-4. Check the console output for error messages
+1. Verify the app bundle has write permissions (needed for backups/updates)
+2. Check the console output for error messages (`open -a Terminal WordGlobalReplace.app`)
+3. Ensure you have an active internet connection for auto-updates
 
 ## Support
 
@@ -264,51 +381,21 @@ For issues and support, please check the GitHub repository or contact the develo
     def _create_installer_script(self, resources_dir):
         """Create an installer script for easy setup"""
         installer_content = f'''#!/bin/bash
-# WordGlobalReplace Installer Script
+# WordGlobalReplace Quick Launch Script
 
-echo "WordGlobalReplace Installer"
-echo "=========================="
+echo "WordGlobalReplace"
+echo "=================="
 
 cd "$(dirname "$0")"
 
-# Check if Python 3 is installed
-if ! command -v python3 &> /dev/null; then
-    echo "Error: Python 3 is not installed. Please install Python 3.7 or higher."
-    exit 1
-fi
-
-# Check Python version
-python_version=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-required_version="3.7"
-
-if [ "$(printf '%s\\n' "$required_version" "$python_version" | sort -V | head -n1)" != "$required_version" ]; then
-    echo "Error: Python $required_version or higher is required. Found: $python_version"
-    exit 1
-fi
-
-echo "Python version: $python_version ✓"
-
-# Install dependencies
-echo "Installing dependencies..."
-python3 -m pip install --user -r requirements.txt
-
-if [ $? -eq 0 ]; then
-    echo "Dependencies installed successfully ✓"
-else
-    echo "Error: Failed to install dependencies"
-    exit 1
-fi
-
-# Make launcher executable
-chmod +x run.py
-
+echo "All dependencies are bundled with the application."
 echo ""
-echo "Installation completed successfully!"
-echo ""
-echo "To run the application:"
+echo "To launch the app now, run:"
 echo "  open ../.."
 echo ""
-echo "The application will open in your browser at: {DEFAULT_LOCAL_URL}"
+echo "When running, open your browser to: {DEFAULT_LOCAL_URL}"
+echo ""
+echo "Tip: You can place WordGlobalReplace.app in /Applications for easy access."
 '''
         
         installer_path = os.path.join(resources_dir, "install.sh")
@@ -351,7 +438,7 @@ def main():
         print(f"\\nTo distribute:")
         print(f"1. Share the {args.output_dir}/WordGlobalReplace.zip file")
         print("2. Recipients should extract and copy WordGlobalReplace.app to their Applications folder (or another preferred location)")
-        print("3. Optional: run ./WordGlobalReplace.app/Contents/Resources/install.sh to pre-install dependencies")
+        print("3. Optional: run ./WordGlobalReplace.app/Contents/Resources/install.sh for quick launch instructions")
         print("4. Launch the app by double-clicking WordGlobalReplace.app or running: open WordGlobalReplace.app")
     else:
         print("Failed to create distribution")

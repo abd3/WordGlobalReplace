@@ -182,9 +182,11 @@ class WordFindReplace {
         row.dataset.occurrenceId = occurrence.id;
         
         const fileName = occurrence.file_path.split('/').pop();
-        const highlightedContext = this.highlightSearchTerm(
-            occurrence.full_context,
-            occurrence.match_text
+        const contextSnapshot = occurrence.full_context || '';
+        const highlightedContext = this.renderHighlightedContext(
+            contextSnapshot,
+            occurrence.match_text,
+            'highlight-original'
         );
         
         const globalReplace = document.getElementById('replace-term').value.trim();
@@ -220,12 +222,19 @@ class WordFindReplace {
         const checkbox = row.querySelector('.occurrence-checkbox');
         checkbox.addEventListener('change', () => this.updateSelectAllState());
         
+        row.dataset.context = contextSnapshot;
+        row.dataset.matchText = occurrence.match_text || '';
+        
         return row;
     }
 
-    highlightSearchTerm(context, searchTerm) {
+    renderHighlightedContext(context, searchTerm, highlightClass = 'highlight-original') {
+        const safeContext = context || '';
+        if (!searchTerm) {
+            return safeContext;
+        }
         const regex = new RegExp(`(${this.escapeRegExp(searchTerm)})`, 'gi');
-        return context.replace(regex, '<mark class="highlight">$1</mark>');
+        return safeContext.replace(regex, `<mark class="highlight ${highlightClass}">$1</mark>`);
     }
 
     escapeRegExp(string) {
@@ -266,11 +275,8 @@ class WordFindReplace {
             
             if (result.success) {
                 this.showStatus(`Successfully replaced text in ${occurrence.file_path.split('/').pop()}`, 'success');
-                // Remove the row from the table
-                row.remove();
-                // Remove from current results
-                this.currentResults.splice(index, 1);
-                this.updateResultsCount();
+                this.applyReplacementToRow(row, occurrence, newText);
+                this.updateSelectAllState();
             } else {
                 this.showStatus(`Replacement failed: ${result.error}`, 'error');
             }
@@ -328,8 +334,15 @@ class WordFindReplace {
             
             if (result.success) {
                 this.showStatus(`Successfully replaced ${result.successful_replacements} out of ${result.total_processed} occurrences`, 'success');
-                // Remove successfully replaced rows
-                this.removeReplacedRows(changedReplacements);
+                changedReplacements.forEach(rep => {
+                    const row = document.querySelector(`tr[data-occurrence-id="${rep.id}"]`);
+                    if (!row) {
+                        return;
+                    }
+                    const original = this.currentResults.find(occ => occ.id === rep.id);
+                    this.applyReplacementToRow(row, original, rep.replacement_text);
+                });
+                this.updateSelectAllState();
             } else {
                 this.showStatus(`Bulk replacement failed: ${result.error}`, 'error');
             }
@@ -338,20 +351,55 @@ class WordFindReplace {
         }
     }
 
-    removeReplacedRows(replacedOccurrences) {
-        replacedOccurrences.forEach(occurrence => {
-            const row = document.querySelector(`tr[data-occurrence-id="${occurrence.id}"]`);
-            if (row) {
-                row.remove();
-            }
-        });
-        
-        // Update current results
-        this.currentResults = this.currentResults.filter(occ => 
-            !replacedOccurrences.some(rep => rep.id === occ.id)
-        );
-        
-        this.updateResultsCount();
+    applyReplacementToRow(row, occurrence, newText) {
+        if (!row) {
+            return;
+        }
+
+        const currentContext = row.dataset.context || (occurrence && occurrence.full_context) || '';
+        const previousMatch = row.dataset.matchText || (occurrence && occurrence.match_text) || '';
+        const updatedContext = this.replaceFirst(currentContext, previousMatch, newText);
+
+        row.dataset.context = updatedContext;
+        row.dataset.matchText = newText;
+
+        if (occurrence) {
+            occurrence.full_context = updatedContext;
+            occurrence.match_text = newText;
+            occurrence.replacement_text = newText;
+        }
+
+        const contextDiv = row.querySelector('.context-text');
+        if (contextDiv) {
+            contextDiv.innerHTML = this.renderHighlightedContext(updatedContext, newText, 'highlight-replaced');
+        }
+
+        const replacementInput = row.querySelector('.replacement-input');
+        if (replacementInput) {
+            replacementInput.value = newText;
+        }
+
+        const checkbox = row.querySelector('.occurrence-checkbox');
+        if (checkbox) {
+            checkbox.checked = false;
+        }
+
+        row.classList.add('row-replaced');
+    }
+
+    replaceFirst(text, searchValue, replaceValue) {
+        if (!searchValue) {
+            return text || '';
+        }
+
+        const source = text || '';
+        const index = source.indexOf(searchValue);
+
+        if (index === -1) {
+            return source;
+        }
+
+        return source.slice(0, index) + replaceValue + source.slice(index + searchValue.length);
     }
 
     getSelectedOccurrences() {
