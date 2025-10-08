@@ -26,6 +26,11 @@ class LocalBuildSystem:
         self.build_dir = os.path.join(self.project_root, "build")
         self.dist_dir = os.path.join(self.project_root, "dist")
         self.version = self.get_version()
+        self.venv_dir = Path(self.project_root) / ".venv"
+        if os.name == 'nt':
+            self.venv_python = self.venv_dir / "Scripts" / "python.exe"
+        else:
+            self.venv_python = self.venv_dir / "bin" / "python"
         
     def get_version(self):
         """Get current version from git or version file"""
@@ -57,14 +62,38 @@ class LocalBuildSystem:
         
         os.makedirs(self.build_dir, exist_ok=True)
         os.makedirs(self.dist_dir, exist_ok=True)
+
+    def ensure_virtualenv(self):
+        """Create a project-local virtual environment if it does not exist"""
+        if self.venv_dir.exists():
+            return True
+
+        logger.info("Creating virtual environment at %s", self.venv_dir)
+        try:
+            subprocess.run([sys.executable, "-m", "venv", "--upgrade-deps", str(self.venv_dir)],
+                           check=True, capture_output=True, text=True)
+            return True
+        except subprocess.CalledProcessError as exc:
+            logger.error(f"Failed to create virtual environment: {exc.stderr or exc}")
+            return False
+        except Exception as exc:
+            logger.error(f"Unexpected error creating virtualenv: {exc}")
+            return False
     
     def install_dependencies(self):
         """Install build dependencies"""
         logger.info("Installing dependencies...")
         
         try:
+            if not self.ensure_virtualenv():
+                return False
+            python = str(self.venv_python)
+
+            subprocess.run([python, "-m", "pip", "install", "--upgrade", "pip"],
+                           check=True, capture_output=True, text=True)
+
             # Install requirements
-            result = subprocess.run([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"], 
+            result = subprocess.run([python, "-m", "pip", "install", "-r", "requirements.txt"], 
                                  cwd=self.project_root, capture_output=True, text=True)
             if result.returncode != 0:
                 logger.error(f"Failed to install dependencies: {result.stderr}")
@@ -73,7 +102,7 @@ class LocalBuildSystem:
             # Install test dependencies
             test_deps = ["pytest", "pytest-cov", "coverage"]
             for dep in test_deps:
-                result = subprocess.run([sys.executable, "-m", "pip", "install", dep], 
+                result = subprocess.run([python, "-m", "pip", "install", dep], 
                                      capture_output=True, text=True)
                 if result.returncode != 0:
                     logger.warning(f"Failed to install {dep}: {result.stderr}")
@@ -90,8 +119,11 @@ class LocalBuildSystem:
         logger.info("Running unit tests...")
         
         try:
+            if not self.ensure_virtualenv():
+                return False
+            python = str(self.venv_python)
             # Run tests with pytest
-            test_cmd = [sys.executable, "-m", "pytest", "tests/", "-v", "--tb=short"]
+            test_cmd = [python, "-m", "pytest", "tests/", "-v", "--tb=short"]
             result = subprocess.run(test_cmd, cwd=self.project_root, capture_output=True, text=True)
             
             if result.returncode != 0:
@@ -113,8 +145,11 @@ class LocalBuildSystem:
         logger.info("Running code linting...")
         
         try:
+            if not self.ensure_virtualenv():
+                return False
+            python = str(self.venv_python)
             # Run flake8 if available
-            result = subprocess.run([sys.executable, "-m", "flake8", "."], 
+            result = subprocess.run([python, "-m", "flake8", "."], 
                                  cwd=self.project_root, capture_output=True, text=True)
             
             if result.returncode != 0:

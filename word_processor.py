@@ -6,7 +6,7 @@ Handles reading, searching, and modifying Microsoft Word documents
 
 import os
 import re
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Optional, Any
 from pathlib import Path
 import logging
 
@@ -82,8 +82,6 @@ class WordProcessor:
             
             context_before = text[context_start:start_pos]
             context_after = text[end_pos:context_end]
-            full_context = text[context_start:context_end]
-            
             # Find which paragraph this occurs in
             paragraph_index = text[:start_pos].count('\n')
             
@@ -94,6 +92,7 @@ class WordProcessor:
                 'context_before': context_before,
                 'context_after': context_after,
                 'full_context': full_context,
+                'context': full_context,
                 'start_pos': start_pos,
                 'end_pos': end_pos
             })
@@ -101,48 +100,78 @@ class WordProcessor:
         return occurrences
     
     def replace_text_in_docx(self, file_path: str, old_text: str, new_text: str) -> bool:
-        """
-        Replace text in a Word document
-        
-        Args:
-            file_path: Path to the Word document
-            old_text: Text to find and replace
-            new_text: Text to replace with
-            
-        Returns:
-            True if replacement was successful, False otherwise
-        """
+        """Legacy convenience wrapper returning a boolean result."""
+        return self.replace_text(file_path, old_text, new_text).get('success', False)
+    
+    def scan_document(self, file_path: str, search_term: str, context_chars: int = 100) -> Dict[str, Any]:
+        """Scan a single document for occurrences of the search term."""
+        result: Dict[str, Any] = {
+            'success': False,
+            'file_path': file_path,
+            'occurrences': [],
+            'error': None
+        }
+
         try:
+            if not Path(file_path).exists():
+                result['error'] = f"File {file_path} does not exist"
+                return result
+
+            if not self.is_word_file(file_path):
+                result['error'] = "Unsupported file type"
+                return result
+
+            occurrences = self.find_text_occurrences(file_path, search_term, context_chars)
+            result['occurrences'] = occurrences
+            result['success'] = True
+            return result
+        except Exception as exc:
+            result['error'] = str(exc)
+            logger.error(f"Error scanning document {file_path}: {exc}")
+            return result
+
+    def replace_text(self, file_path: str, old_text: str, new_text: str) -> Dict[str, Any]:
+        """Replace text in a document and report the result."""
+        result = {
+            'success': False,
+            'file_path': file_path,
+            'replacements_made': 0,
+            'error': None
+        }
+
+        try:
+            if not Path(file_path).exists():
+                result['error'] = f"File {file_path} does not exist"
+                return result
+
+            replacements_made = 0
             doc = Document(file_path)
-            replacement_made = False
-            
-            # Replace in paragraphs
+
             for paragraph in doc.paragraphs:
                 if old_text in paragraph.text:
                     paragraph.text = paragraph.text.replace(old_text, new_text)
-                    replacement_made = True
-            
-            # Replace in tables
+                    replacements_made += 1
+
             for table in doc.tables:
                 for row in table.rows:
                     for cell in row.cells:
                         if old_text in cell.text:
                             cell.text = cell.text.replace(old_text, new_text)
-                            replacement_made = True
-            
-            if replacement_made:
+                            replacements_made += 1
+
+            if replacements_made > 0:
                 doc.save(file_path)
-                logger.info(f"Successfully replaced '{old_text}' with '{new_text}' in {file_path}")
-                return True
+                result['success'] = True
+                result['replacements_made'] = replacements_made
             else:
-                logger.warning(f"No occurrences of '{old_text}' found in {file_path}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error replacing text in {file_path}: {e}")
-            return False
-    
-    def scan_directory(self, directory_path: str, search_term: str, context_chars: int = 100) -> List[Dict]:
+                result['error'] = f"No occurrences of '{old_text}' found"
+            return result
+        except Exception as exc:
+            logger.error(f"Error replacing text in {file_path}: {exc}")
+            result['error'] = str(exc)
+            return result
+
+    def scan_directory(self, directory_path: str, search_term: str, context_chars: int = 100) -> Dict[str, Any]:
         """
         Scan a directory for Word files and find all occurrences of search_term
         
@@ -154,12 +183,22 @@ class WordProcessor:
         Returns:
             List of all occurrences found across all Word files
         """
-        all_occurrences = []
+        result: Dict[str, Any] = {
+            'success': False,
+            'directory': directory_path,
+            'files_processed': 0,
+            'total_occurrences': 0,
+            'occurrences': [],
+            'errors': []
+        }
+
+        all_occurrences: List[Dict[str, Any]] = []
         directory = Path(directory_path)
         
         if not directory.exists():
             logger.error(f"Directory {directory_path} does not exist")
-            return all_occurrences
+            result['error'] = f"Directory {directory_path} does not exist"
+            return result
         
         # Find all Word files in directory and subdirectories
         word_files = []
@@ -174,7 +213,13 @@ class WordProcessor:
                 all_occurrences.extend(occurrences)
                 logger.info(f"Found {len(occurrences)} occurrences in {file_path}")
         
-        return all_occurrences
+        result['success'] = True
+        result['files_processed'] = len(word_files)
+        result['total_occurrences'] = len(all_occurrences)
+        result['occurrences'] = all_occurrences
+        return result
+
+
 
 def main():
     """Test the WordProcessor functionality"""
@@ -199,6 +244,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-

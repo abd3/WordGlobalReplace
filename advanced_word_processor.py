@@ -244,6 +244,7 @@ class AdvancedWordProcessor:
                 'context_before': context_before,
                 'context_after': context_after,
                 'full_context': full_context,
+                'context': full_context,
                 'start_pos': start_pos,
                 'end_pos': end_pos,
                 'location_type': location_type,
@@ -344,6 +345,33 @@ class AdvancedWordProcessor:
         
         return result
     
+    def scan_document_advanced(self, file_path: str, search_term: str, context_chars: int = 150) -> Dict[str, Any]:
+        """Scan a single document using the advanced processor."""
+        result: Dict[str, Any] = {
+            'success': False,
+            'file_path': file_path,
+            'occurrences': [],
+            'error': None
+        }
+
+        try:
+            if not Path(file_path).exists():
+                result['error'] = f"File {file_path} does not exist"
+                return result
+
+            if not self.is_word_file(file_path):
+                result['error'] = "Unsupported file type"
+                return result
+
+            occurrences = self.find_occurrences_with_context(file_path, search_term, context_chars)
+            result['occurrences'] = occurrences
+            result['success'] = True
+            return result
+        except Exception as exc:
+            result['error'] = str(exc)
+            logger.error(f"Error scanning document {file_path}: {exc}")
+            return result
+
     def scan_directory_advanced(self, directory_path: str, search_term: str, 
                               context_chars: int = 150) -> Dict[str, Any]:
         """
@@ -359,6 +387,7 @@ class AdvancedWordProcessor:
                 'success': False,
                 'error': f"Directory {directory_path} does not exist",
                 'files_scanned': 0,
+                'files_processed': 0,
                 'total_occurrences': 0,
                 'occurrences': []
             }
@@ -384,6 +413,7 @@ class AdvancedWordProcessor:
         return {
             'success': True,
             'files_scanned': len(word_files),
+            'files_processed': len(word_files),
             'files_with_matches': files_with_matches,
             'total_occurrences': len(all_occurrences),
             'occurrences': all_occurrences,
@@ -433,6 +463,5 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
 

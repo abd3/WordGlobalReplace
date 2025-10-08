@@ -71,9 +71,21 @@ class TestAutoUpdater(unittest.TestCase):
         """Test getting latest version via GitHub API"""
         # Mock API response
         mock_response = MagicMock()
-        mock_response.read.return_value = b'{"sha": "def456ghi789"}'
+        mock_response.read.return_value = (
+            b'{"sha": "def456ghi789", "parents": [{"sha": "parent123"}]}'
+        )
         mock_urlopen.return_value.__enter__.return_value = mock_response
         
+        version = self.updater.get_latest_version()
+        self.assertEqual(version, "parent123")
+    
+    @patch('auto_updater.urllib.request.urlopen')
+    def test_get_latest_version_via_api_no_parents(self, mock_urlopen):
+        """Ensure API fallback uses commit sha when parents missing"""
+        mock_response = MagicMock()
+        mock_response.read.return_value = b'{"sha": "def456ghi789", "parents": []}'
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
         version = self.updater.get_latest_version()
         self.assertEqual(version, "def456ghi789")
     
@@ -81,24 +93,29 @@ class TestAutoUpdater(unittest.TestCase):
     def test_get_latest_version_via_git(self, mock_run):
         """Test getting latest version via git clone"""
         # Mock git clone command
-        mock_run.return_value.returncode = 0
-        
-        # Mock git rev-parse command
-        def side_effect(*args, **kwargs):
-            if 'rev-parse' in args:
-                result = MagicMock()
-                result.returncode = 0
-                result.stdout = "def456ghi789"
-                return result
-            else:
-                result = MagicMock()
-                result.returncode = 0
-                return result
-        
+        clone_result = MagicMock()
+        clone_result.returncode = 0
+        clone_result.stdout = ""
+
+        rev_parse_parent = MagicMock()
+        rev_parse_parent.returncode = 0
+        rev_parse_parent.stdout = "parent123\n"
+
+        rev_parse_head = MagicMock()
+        rev_parse_head.returncode = 0
+        rev_parse_head.stdout = "def456ghi789\n"
+
+        def side_effect(cmd, *args, **kwargs):
+            if isinstance(cmd, (list, tuple)) and "rev-parse" in cmd:
+                if cmd[-1] == "HEAD^":
+                    return rev_parse_parent
+                return rev_parse_head
+            return clone_result
+
         mock_run.side_effect = side_effect
         
         version = self.updater.get_latest_version()
-        self.assertEqual(version, "def456ghi789")
+        self.assertEqual(version, "parent123")
     
     def test_check_for_updates_no_update(self):
         """Test check for updates when no update is available"""
