@@ -72,7 +72,12 @@ class AutoUpdater:
                 try:
                     with urllib.request.urlopen(api_url) as response:
                         data = json.loads(response.read().decode())
-                        return data['sha']
+                        sha = data.get('sha')
+                        parents = data.get('parents') or []
+                        if parents:
+                            logger.debug("Using parent commit %s for update comparison", parents[0].get('sha'))
+                            return parents[0].get('sha') or sha
+                        return sha
                 except Exception as e:
                     logger.warning(f"GitHub API failed: {e}, trying git fetch")
                     return self._get_latest_via_git()
@@ -95,6 +100,11 @@ class AutoUpdater:
                                       capture_output=True, text=True)
                 if result.returncode == 0:
                     # Get the commit hash
+                    result = subprocess.run(['git', 'rev-parse', 'HEAD^'], 
+                                          cwd=temp_dir, capture_output=True, text=True)
+                    if result.returncode == 0:
+                        return result.stdout.strip()
+                    # Repository may have only one commit; fall back to HEAD
                     result = subprocess.run(['git', 'rev-parse', 'HEAD'], 
                                           cwd=temp_dir, capture_output=True, text=True)
                     if result.returncode == 0:
