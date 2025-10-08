@@ -8,6 +8,7 @@ import os
 import sys
 import json
 import subprocess
+import threading
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from pathlib import Path
 import logging
@@ -26,6 +27,9 @@ except Exception as tk_exc:  # ImportError or TclError if DISPLAY missing
 
 def _select_directory_with_tk():
     """Use tkinter's native dialog to choose a directory."""
+    if threading.current_thread() is not threading.main_thread():
+        raise RuntimeError("tkinter directory picker must be run on the main thread")
+
     root = tk.Tk()
     root.withdraw()
     root.update()
@@ -229,13 +233,12 @@ def select_directory():
         strategies = []
         errors = []
 
+        if sys.platform == 'darwin':
+            strategies.append(('applescript', _select_directory_with_applescript))
         if TK_AVAILABLE:
             strategies.append(('tkinter', _select_directory_with_tk))
         elif TK_ERROR:
             errors.append(f"tkinter unavailable: {TK_ERROR}")
-
-        if sys.platform == 'darwin':
-            strategies.append(('applescript', _select_directory_with_applescript))
 
         if not strategies:
             detail = '; '.join(errors) if errors else 'No directory picker strategy is available.'
