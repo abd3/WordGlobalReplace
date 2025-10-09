@@ -6,19 +6,89 @@ Checks GitHub for new commits and updates the application automatically
 
 import os
 import sys
-import json
 import subprocess
 import shutil
 import tempfile
 from pathlib import Path
 from datetime import datetime
 import logging
+import urllib.request
+import urllib.parse
+import re
+from typing import List, Optional, Tuple, Union
 
 from config import DEFAULT_REPO_URL
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+SEMVER_RE = re.compile(
+    r'^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?$'
+)
+
+
+PrereleasePart = Tuple[bool, Union[int, str]]
+
+
+def _split_prerelease(value: Optional[str]) -> List[PrereleasePart]:
+    if not value:
+        return []
+    parts = value.split('.')
+    result: List[PrereleasePart] = []
+    for part in parts:
+        if part.isdigit():
+            result.append((True, int(part)))
+        else:
+            result.append((False, part))
+    return result
+
+
+def _parse_semver(value: str) -> Optional[Tuple[int, int, int, List[PrereleasePart]]]:
+    match = SEMVER_RE.fullmatch(value.strip())
+    if not match:
+        return None
+    major, minor, patch, prerelease, _build = match.groups()
+    return (
+        int(major),
+        int(minor),
+        int(patch),
+        _split_prerelease(prerelease),
+    )
+
+
+def _compare_semver(a: str, b: str) -> int:
+    parsed_a = _parse_semver(a)
+    parsed_b = _parse_semver(b)
+    if not parsed_a or not parsed_b:
+        return (a > b) - (a < b)
+
+    for idx in range(3):
+        if parsed_a[idx] != parsed_b[idx]:
+            return (parsed_a[idx] > parsed_b[idx]) - (parsed_a[idx] < parsed_b[idx])
+
+    pre_a = parsed_a[3]
+    pre_b = parsed_b[3]
+    if not pre_a and not pre_b:
+        return 0
+    if not pre_a:
+        return 1
+    if not pre_b:
+        return -1
+
+    for part_a, part_b in zip(pre_a, pre_b):
+        is_digit_a, value_a = part_a
+        is_digit_b, value_b = part_b
+        if is_digit_a and is_digit_b:
+            if value_a != value_b:
+                return (value_a > value_b) - (value_a < value_b)
+        elif is_digit_a != is_digit_b:
+            return -1 if is_digit_a else 1
+        else:
+            if value_a != value_b:
+                return (value_a > value_b) - (value_a < value_b)
+    return (len(pre_a) > len(pre_b)) - (len(pre_a) < len(pre_b))
+
 
 class AutoUpdater:
     def __init__(self, repo_url=DEFAULT_REPO_URL, 
@@ -38,80 +108,51 @@ class AutoUpdater:
         self.update_log = os.path.join(self.current_dir, ".update_log")
         
     def get_current_version(self):
-        """Get the current version/commit hash"""
+        """Return the installed semantic version string."""
         try:
             if os.path.exists(self.version_file):
-                with open(self.version_file, 'r') as f:
-                    return f.read().strip()
-            else:
-                # Try to get current commit hash
-                result = subprocess.run(['git', 'rev-parse', 'HEAD'], 
-                                     cwd=self.current_dir, 
-                                     capture_output=True, text=True)
-                if result.returncode == 0:
-                    return result.stdout.strip()
-                return "unknown"
+                with open(self.version_file, 'r', encoding='utf-8') as f:
+                    return f.read().strip() or "0.0.0"
+            return "0.0.0"
         except Exception as e:
             logger.error(f"Error getting current version: {e}")
-            return "unknown"
+            return "0.0.0"
     
-    def get_latest_version(self):
-        """Get the latest version/commit hash from GitHub"""
+    def _get_remote_version_url(self) -> Optional[str]:
         try:
-            # Use GitHub API to get latest commit
-            import urllib.request
-            import urllib.parse
-            
-            # Extract owner and repo from URL
-            if "github.com" in self.repo_url:
-                parts = self.repo_url.replace("https://github.com/", "").replace(".git", "")
-                owner, repo = parts.split("/")
-                
-                api_url = f"https://api.github.com/repos/{owner}/{repo}/commits/{self.branch}"
-                
-                try:
-                    with urllib.request.urlopen(api_url) as response:
-                        data = json.loads(response.read().decode())
-                        sha = data.get('sha')
-                        parents = data.get('parents') or []
-                        if parents:
-                            logger.debug("Using parent commit %s for update comparison", parents[0].get('sha'))
-                            return parents[0].get('sha') or sha
-                        return sha
-                except Exception as e:
-                    logger.warning(f"GitHub API failed: {e}, trying git fetch")
-                    return self._get_latest_via_git()
-            else:
-                return self._get_latest_via_git()
-                
-        except Exception as e:
-            logger.error(f"Error getting latest version: {e}")
+            if "github.com" not in self.repo_url:
+                return None
+            parts = self.repo_url.replace("https://github.com/", "").replace(".git", "")
+            owner, repo = parts.split("/")
+            raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{self.branch}/.version"
+            with urllib.request.urlopen(raw_url) as response:
+                return response.read().decode("utf-8").strip()
+        except Exception as exc:
+            logger.warning(f"Failed to fetch .version via raw URL: {exc}")
             return None
-    
-    def _get_latest_via_git(self):
-        """Fallback method to get latest version via git"""
+
+    def _get_latest_via_git(self) -> Optional[str]:
+        """Fallback method to get latest version via git clone"""
         try:
-            # Create a temporary directory to fetch latest
             with tempfile.TemporaryDirectory() as temp_dir:
-                # Clone the repository
                 result = subprocess.run(['git', 'clone', '--depth', '1', 
                                        '--branch', self.branch, 
                                        self.repo_url, temp_dir], 
                                       capture_output=True, text=True)
                 if result.returncode == 0:
-                    # Get the commit hash
-                    result = subprocess.run(['git', 'rev-parse', 'HEAD^'], 
-                                          cwd=temp_dir, capture_output=True, text=True)
-                    if result.returncode == 0:
-                        return result.stdout.strip()
-                    # Repository may have only one commit; fall back to HEAD
-                    result = subprocess.run(['git', 'rev-parse', 'HEAD'], 
-                                          cwd=temp_dir, capture_output=True, text=True)
-                    if result.returncode == 0:
-                        return result.stdout.strip()
+                    version_path = Path(temp_dir) / ".version"
+                    if version_path.exists():
+                        return version_path.read_text(encoding="utf-8").strip()
         except Exception as e:
             logger.error(f"Error in git fallback: {e}")
         return None
+    
+    def get_latest_version(self):
+        """Fetch the most recent available semantic version."""
+        version = self._get_remote_version_url()
+        if version:
+            return version
+        return self._get_latest_via_git()
     
     def check_for_updates(self):
         """Check if there are updates available"""
@@ -123,7 +164,7 @@ class AutoUpdater:
                 logger.warning("Could not determine latest version")
                 return False, None, None
             
-            if current_version == latest_version:
+            if _compare_semver(latest_version, current_version) <= 0:
                 logger.info("Application is up to date")
                 return False, current_version, latest_version
             
@@ -170,7 +211,7 @@ class AutoUpdater:
                 
                 # Copy new files (excluding .git, backups, and other non-essential directories)
                 exclude_dirs = {'.git', 'backups', '__pycache__', '.DS_Store'}
-                exclude_files = {'.version', '.update_log'}
+                exclude_files = {'.update_log'}
                 
                 for root, dirs, files in os.walk(temp_dir):
                     # Skip excluded directories

@@ -8,23 +8,126 @@ import os
 import sys
 import subprocess
 import shutil
-import tempfile
 import json
 import zipfile
 from pathlib import Path
 import logging
 from datetime import datetime
 import argparse
+import re
+from dataclasses import dataclass
+from typing import Optional
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+SEMVER_PATTERN = re.compile(
+    r'^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?$'
+)
+
+
+@dataclass
+class SemVer:
+    major: int
+    minor: int
+    patch: int
+    prerelease: Optional[str] = None
+    build: Optional[str] = None
+
+    def __str__(self) -> str:
+        base = f"{self.major}.{self.minor}.{self.patch}"
+        if self.prerelease:
+            base += f"-{self.prerelease}"
+        if self.build:
+            base += f"+{self.build}"
+        return base
+
+
+class VersionManager:
+    """Minimal SemVer manager for local builds using .version file."""
+
+    def __init__(self, project_root: str, filename: str = ".version"):
+        self.version_path = Path(project_root) / filename
+
+    def _parse(self, value: str) -> SemVer:
+        match = SEMVER_PATTERN.fullmatch(value.strip())
+        if not match:
+            raise ValueError(f"Invalid semantic version: '{value}'")
+        major, minor, patch, prerelease, build = match.groups()
+        return SemVer(int(major), int(minor), int(patch), prerelease, build)
+
+    def _validate_meta(self, meta: Optional[str], label: str) -> Optional[str]:
+        if meta is None:
+            return None
+        if meta == "":
+            return None
+        if not re.fullmatch(r'[0-9A-Za-z.-]+', meta):
+            raise ValueError(
+                f"Invalid {label} metadata '{meta}'. "
+                "Only alphanumerics, dots, and hyphen are permitted."
+            )
+        return meta
+
+    def read(self) -> SemVer:
+        if not self.version_path.exists():
+            return SemVer(0, 1, 0)
+        raw = self.version_path.read_text().strip()
+        if not raw:
+            return SemVer(0, 1, 0)
+        return self._parse(raw)
+
+    def write(self, version: SemVer) -> None:
+        self.version_path.write_text(str(version) + "\n")
+
+    def get_version(self) -> str:
+        return str(self.read())
+
+    def bump_version(
+        self,
+        bump_type: str = "patch",
+        prerelease: Optional[str] = None,
+        build: Optional[str] = None,
+    ) -> str:
+        bump_type = (bump_type or "patch").lower()
+        version = self.read()
+
+        if bump_type == "major":
+            version = SemVer(version.major + 1, 0, 0)
+        elif bump_type == "minor":
+            version = SemVer(version.major, version.minor + 1, 0)
+        elif bump_type == "patch":
+            version = SemVer(version.major, version.minor, version.patch + 1)
+        elif bump_type in {"none", "keep"}:
+            version = SemVer(
+                version.major,
+                version.minor,
+                version.patch,
+                version.prerelease,
+                version.build,
+            )
+        else:
+            raise ValueError(f"Unsupported version bump type: '{bump_type}'")
+
+        if prerelease is not None:
+            version.prerelease = self._validate_meta(prerelease, "pre-release")
+        elif bump_type != "none":
+            version.prerelease = None
+
+        if build is not None:
+            version.build = self._validate_meta(build, "build")
+        elif bump_type != "none":
+            version.build = None
+
+        self.write(version)
+        return str(version)
 
 class LocalBuildSystem:
     def __init__(self, project_root=None):
         self.project_root = project_root or os.path.dirname(os.path.abspath(__file__))
         self.build_dir = os.path.join(self.project_root, "build")
         self.dist_dir = os.path.join(self.project_root, "dist")
+        self.version_manager = VersionManager(self.project_root)
         self.version = self.get_version()
         self.venv_dir = Path(self.project_root) / ".venv"
         if os.name == 'nt':
@@ -33,33 +136,17 @@ class LocalBuildSystem:
             self.venv_python = self.venv_dir / "bin" / "python"
         
     def get_version(self):
-        """Get current version from git or version file"""
-        try:
-            # Try to get version from git
-            result = subprocess.run(['git', 'describe', '--tags', '--always'], 
-                                 cwd=self.project_root, capture_output=True, text=True)
-            if result.returncode == 0:
-                return result.stdout.strip()
-        except:
-            pass
-        
-        # Fallback to version file or timestamp
-        version_file = os.path.join(self.project_root, 'VERSION')
-        if os.path.exists(version_file):
-            with open(version_file, 'r') as f:
-                return f.read().strip()
-        
-        return datetime.now().strftime('%Y%m%d_%H%M%S')
+        """Return current semantic version string."""
+        return self.version_manager.get_version()
     
     def clean_build_dirs(self):
         """Clean build and distribution directories"""
         logger.info("Cleaning build directories...")
         
-        for dir_path in [self.build_dir, self.dist_dir]:
-            if os.path.exists(dir_path):
-                shutil.rmtree(dir_path)
-                logger.info(f"Cleaned {dir_path}")
-        
+        if os.path.exists(self.build_dir):
+            shutil.rmtree(self.build_dir)
+            logger.info(f"Cleaned {self.build_dir}")
+
         os.makedirs(self.build_dir, exist_ok=True)
         os.makedirs(self.dist_dir, exist_ok=True)
 
@@ -284,11 +371,63 @@ class LocalBuildSystem:
             logger.error(f"Error publishing to GitHub: {e}")
             return False
     
-    def build(self, repo_url=None, publish=False, github_token=None, github_repo=None):
+    def run_application_smoke_test(self):
+        """Launch the packaged app as a final smoke test."""
+        app_executable = Path(self.dist_dir) / "WordGlobalReplace.app" / "Contents" / "MacOS" / "WordGlobalReplace"
+        if not app_executable.exists():
+            logger.error("Cannot run smoke test; app executable not found at %s", app_executable)
+            return False
+
+        logger.info("Launching packaged application for smoke test.")
+        logger.info("Press Ctrl+C in this terminal to stop the app once the browser window opens.")
+
+        try:
+            process = subprocess.Popen([str(app_executable)], cwd=app_executable.parent)
+            interrupted = False
+            try:
+                process.wait()
+            except KeyboardInterrupt:
+                logger.info("Ctrl+C detected; stopping the application...")
+                interrupted = True
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    logger.warning("Application did not terminate gracefully; forcing shutdown.")
+                    process.kill()
+            exit_code = process.poll()
+            logger.info("Smoke test application exited with code %s", exit_code)
+            return True if interrupted else exit_code == 0
+        except FileNotFoundError:
+            logger.error("Application executable not found: %s", app_executable)
+        except Exception as exc:
+            logger.error(f"Failed to launch application: {exc}")
+        return False
+    
+    def build(
+        self,
+        repo_url=None,
+        publish=False,
+        github_token=None,
+        github_repo=None,
+        run_app=True,
+        version_bump="patch",
+        prerelease=None,
+        build_metadata=None,
+    ):
         """Main build process"""
         logger.info("Starting local build process...")
-        logger.info(f"Version: {self.version}")
         logger.info(f"Project root: {self.project_root}")
+
+        try:
+            self.version = self.version_manager.bump_version(
+                version_bump, prerelease=prerelease, build=build_metadata
+            )
+        except ValueError as exc:
+            logger.error(f"Versioning error: {exc}")
+            return False
+
+        logger.info(f"Using version: {self.version}")
         
         # Step 1: Clean build directories
         self.clean_build_dirs()
@@ -322,6 +461,12 @@ class LocalBuildSystem:
             if not self.publish_to_github(zip_path, github_token, github_repo):
                 logger.error("Failed to publish to GitHub")
                 return False
+
+        # Step 8: Launch the packaged app for a manual smoke test
+        if run_app:
+            if not self.run_application_smoke_test():
+                logger.error("Smoke test failed.")
+                return False
         
         logger.info("Local build completed successfully!")
         logger.info(f"Distribution: {self.dist_dir}")
@@ -338,6 +483,11 @@ def main():
     parser.add_argument('--github-repo', help='GitHub repository (owner/repo)')
     parser.add_argument('--skip-tests', action='store_true', help='Skip running tests')
     parser.add_argument('--skip-linting', action='store_true', help='Skip linting')
+    parser.add_argument('--skip-run-app', action='store_true', help='Skip launching the packaged app at the end of the build')
+    parser.add_argument('--version-bump', choices=['major', 'minor', 'patch', 'none'], default='patch',
+                        help='Semantic version component to bump (default: patch)')
+    parser.add_argument('--pre-release', help='Set semantic version pre-release identifier')
+    parser.add_argument('--build-metadata', help='Set semantic version build metadata')
     
     args = parser.parse_args()
     
@@ -353,7 +503,11 @@ def main():
         repo_url=args.repo_url,
         publish=args.publish,
         github_token=args.github_token,
-        github_repo=args.github_repo
+        github_repo=args.github_repo,
+        run_app=not args.skip_run_app,
+        version_bump=args.version_bump,
+        prerelease=args.pre_release,
+        build_metadata=args.build_metadata,
     )
     
     return 0 if success else 1

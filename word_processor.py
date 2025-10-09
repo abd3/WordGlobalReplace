@@ -82,6 +82,7 @@ class WordProcessor:
             
             context_before = text[context_start:start_pos]
             context_after = text[end_pos:context_end]
+            full_context = text[context_start:context_end]
             # Find which paragraph this occurs in
             paragraph_index = text[:start_pos].count('\n')
             

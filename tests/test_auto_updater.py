@@ -42,100 +42,54 @@ class TestAutoUpdater(unittest.TestCase):
         """Test getting current version from version file"""
         # Create a version file
         with open(self.updater.version_file, 'w') as f:
-            f.write("abc123def456")
-        
+            f.write("1.2.3")
+
         version = self.updater.get_current_version()
-        self.assertEqual(version, "abc123def456")
+        self.assertEqual(version, "1.2.3")
     
     def test_get_current_version_unknown(self):
         """Test getting current version when no version file exists"""
         version = self.updater.get_current_version()
-        self.assertEqual(version, "unknown")
-    
-    @patch('auto_updater.subprocess.run')
-    def test_get_current_version_from_git(self, mock_run):
-        """Test getting current version from git"""
-        # Mock git command to return a commit hash
-        mock_run.return_value.returncode = 0
-        mock_run.return_value.stdout = "abc123def456"
-        
-        # Remove version file to force git check
-        if os.path.exists(self.updater.version_file):
-            os.remove(self.updater.version_file)
-        
-        version = self.updater.get_current_version()
-        self.assertEqual(version, "abc123def456")
+        self.assertEqual(version, "0.0.0")
     
     @patch('auto_updater.urllib.request.urlopen')
     def test_get_latest_version_via_api(self, mock_urlopen):
         """Test getting latest version via GitHub API"""
         # Mock API response
         mock_response = MagicMock()
-        mock_response.read.return_value = (
-            b'{"sha": "def456ghi789", "parents": [{"sha": "parent123"}]}'
-        )
+        mock_response.read.return_value = b'1.2.3'
         mock_urlopen.return_value.__enter__.return_value = mock_response
         
         version = self.updater.get_latest_version()
-        self.assertEqual(version, "parent123")
+        self.assertEqual(version, "1.2.3")
     
-    @patch('auto_updater.urllib.request.urlopen')
-    def test_get_latest_version_via_api_no_parents(self, mock_urlopen):
-        """Ensure API fallback uses commit sha when parents missing"""
-        mock_response = MagicMock()
-        mock_response.read.return_value = b'{"sha": "def456ghi789", "parents": []}'
-        mock_urlopen.return_value.__enter__.return_value = mock_response
-
-        version = self.updater.get_latest_version()
-        self.assertEqual(version, "def456ghi789")
-    
-    @patch('auto_updater.subprocess.run')
-    def test_get_latest_version_via_git(self, mock_run):
-        """Test getting latest version via git clone"""
-        # Mock git clone command
-        clone_result = MagicMock()
-        clone_result.returncode = 0
-        clone_result.stdout = ""
-
-        rev_parse_parent = MagicMock()
-        rev_parse_parent.returncode = 0
-        rev_parse_parent.stdout = "parent123\n"
-
-        rev_parse_head = MagicMock()
-        rev_parse_head.returncode = 0
-        rev_parse_head.stdout = "def456ghi789\n"
-
-        def side_effect(cmd, *args, **kwargs):
-            if isinstance(cmd, (list, tuple)) and "rev-parse" in cmd:
-                if cmd[-1] == "HEAD^":
-                    return rev_parse_parent
-                return rev_parse_head
-            return clone_result
-
-        mock_run.side_effect = side_effect
-        
-        version = self.updater.get_latest_version()
-        self.assertEqual(version, "parent123")
+    def test_get_latest_version_via_git(self):
+        """Test git fallback when raw URL fetch fails"""
+        with patch.object(self.updater, '_get_remote_version_url', return_value=None):
+            with patch.object(self.updater, '_get_latest_via_git', return_value="2.0.0") as git_mock:
+                version = self.updater.get_latest_version()
+                git_mock.assert_called_once()
+                self.assertEqual(version, "2.0.0")
     
     def test_check_for_updates_no_update(self):
         """Test check for updates when no update is available"""
-        with patch.object(self.updater, 'get_current_version', return_value="abc123"):
-            with patch.object(self.updater, 'get_latest_version', return_value="abc123"):
+        with patch.object(self.updater, 'get_current_version', return_value="1.2.3"):
+            with patch.object(self.updater, 'get_latest_version', return_value="1.2.3"):
                 has_update, current, latest = self.updater.check_for_updates()
                 
                 self.assertFalse(has_update)
-                self.assertEqual(current, "abc123")
-                self.assertEqual(latest, "abc123")
+                self.assertEqual(current, "1.2.3")
+                self.assertEqual(latest, "1.2.3")
     
     def test_check_for_updates_available(self):
         """Test check for updates when update is available"""
-        with patch.object(self.updater, 'get_current_version', return_value="abc123"):
-            with patch.object(self.updater, 'get_latest_version', return_value="def456"):
+        with patch.object(self.updater, 'get_current_version', return_value="1.2.3"):
+            with patch.object(self.updater, 'get_latest_version', return_value="1.3.0"):
                 has_update, current, latest = self.updater.check_for_updates()
                 
                 self.assertTrue(has_update)
-                self.assertEqual(current, "abc123")
-                self.assertEqual(latest, "def456")
+                self.assertEqual(current, "1.2.3")
+                self.assertEqual(latest, "1.3.0")
     
     def test_check_for_updates_error(self):
         """Test check for updates when error occurs"""
