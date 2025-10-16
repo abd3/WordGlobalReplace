@@ -14,6 +14,7 @@ import logging
 import sysconfig
 import json
 import tempfile
+import textwrap
 from typing import Optional
 
 from config import DEFAULT_LOCAL_URL, DEFAULT_REPO_URL, CF_BUNDLE_IDENTIFIER
@@ -49,6 +50,7 @@ class DistributionCreator:
 
             # Copy application files
             self._copy_application_files(resources_dir)
+            self._prepare_app_icon(resources_dir)
 
             # Create Info.plist metadata
             self._create_info_plist(contents_dir)
@@ -106,6 +108,52 @@ class DistributionCreator:
                 else:
                     shutil.copy2(src, dst)
                 logger.info(f"Copied {item}")
+
+    def _prepare_app_icon(self, resources_dir: str):
+        """Ensure the application icon (.icns) is available in the bundle."""
+        icon_name = "AppIcon.icns"
+        destination = Path(resources_dir) / icon_name
+        assets_dir = Path(self.source_dir) / "assets"
+        iconset = assets_dir / "AppIcon.iconset"
+        existing_icns = assets_dir / icon_name
+
+        if destination.exists():
+            destination.unlink()
+
+        if iconset.exists():
+            iconutil = shutil.which("iconutil")
+            if iconutil:
+                try:
+                    subprocess.run(
+                        [
+                            iconutil,
+                            "--convert",
+                            "icns",
+                            "--output",
+                            str(destination),
+                            str(iconset),
+                        ],
+                        check=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                    )
+                    logger.info("Converted iconset to AppIcon.icns")
+                    return
+                except subprocess.CalledProcessError as exc:
+                    logger.warning("iconutil failed to convert iconset: %s", exc)
+
+        if existing_icns.exists():
+            shutil.copy2(existing_icns, destination)
+            logger.info("Copied existing AppIcon.icns")
+            return
+
+        fallback_png = assets_dir / "AppIcon-1024.png"
+        if fallback_png.exists():
+            shutil.copy2(fallback_png, destination)
+            logger.warning("Using PNG icon as fallback; consider generating AppIcon.icns")
+        else:
+            logger.warning("Application icon assets not found; Dock icon may be generic.")
 
     def _create_info_plist(self, contents_dir):
         """Create the macOS Info.plist metadata file"""
@@ -213,6 +261,10 @@ if __name__ == "__main__":
         os.chmod(python_launcher_path, 0o755)
         logger.info("Created Python launcher script")
 
+        if self._create_swift_launcher(macos_dir, resources_dir, repo_url):
+            logger.info("Created native Swift launcher executable")
+            return
+
         mac_launcher_content = """#!/bin/bash
 APP_DIR=\"$(cd \"$(dirname \"$0\")/..\" && pwd)\"
 RESOURCE_DIR=\"$APP_DIR/Resources\"
@@ -270,6 +322,260 @@ exec /usr/bin/env python3 run.py \"$@\"
             f.write(mac_launcher_content)
         os.chmod(mac_launcher_path, 0o755)
         logger.info("Created macOS launcher executable")
+
+    def _create_swift_launcher(self, macos_dir: str, resources_dir: str, repo_url: Optional[str]) -> bool:
+        """Attempt to build a Swift-based launcher for a richer macOS experience."""
+        if sys.platform != "darwin":
+            return False
+
+        swiftc = shutil.which("swiftc")
+        if not swiftc:
+            logger.debug("swiftc compiler not available; falling back to shell launcher")
+            return False
+
+        swift_source = textwrap.dedent(
+            f"""\
+            import Cocoa
+            import Darwin
+
+            @main
+            class AppDelegate: NSObject, NSApplicationDelegate {{
+                var task: Process?
+                var logHandle: FileHandle?
+                let defaultURL = "{DEFAULT_LOCAL_URL}"
+                let repoURL = "{repo_url or ''}"
+                var isShuttingDown = false
+
+                static func main() {{
+                    let app = NSApplication.shared
+                    let delegate = AppDelegate()
+                    app.delegate = delegate
+                    app.run()
+                }}
+
+                func applicationDidFinishLaunching(_ notification: Notification) {{
+                    NSApp.setActivationPolicy(.regular)
+                    setupMenus()
+                    setupLogging()
+                    launchServer()
+                    NSApp.activate(ignoringOtherApps: true)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {{
+                        self.openWebApp(nil)
+                    }}
+                }}
+
+                func applicationWillTerminate(_ notification: Notification) {{
+                    isShuttingDown = true
+                    stopServer(forceKill: true)
+                    try? logHandle?.close()
+                    logHandle = nil
+                }}
+
+                func setupMenus() {{
+                    let mainMenu = NSMenu()
+                    let appMenuItem = NSMenuItem()
+                    mainMenu.addItem(appMenuItem)
+
+                    let appMenu = NSMenu(title: "WordGlobalReplace")
+                    let openItem = NSMenuItem(title: "Open Web App", action: #selector(openWebApp(_:)), keyEquivalent: "o")
+                    openItem.target = self
+                    appMenu.addItem(openItem)
+                    appMenu.addItem(NSMenuItem.separator())
+                    let quitItem = NSMenuItem(title: "Quit WordGlobalReplace", action: #selector(quitApp(_:)), keyEquivalent: "q")
+                    quitItem.target = self
+                    appMenu.addItem(quitItem)
+                    appMenuItem.submenu = appMenu
+
+                    NSApp.mainMenu = mainMenu
+                }}
+
+                func setupLogging() {{
+                    let fm = FileManager.default
+                    let logDir = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/WordGlobalReplace", isDirectory: true)
+                    try? fm.createDirectory(at: logDir, withIntermediateDirectories: true)
+                    let logURL = logDir.appendingPathComponent("launcher.log")
+                    if !fm.fileExists(atPath: logURL.path) {{
+                        fm.createFile(atPath: logURL.path, contents: nil, attributes: nil)
+                    }}
+                    logHandle = try? FileHandle(forWritingTo: logURL)
+                    logHandle?.seekToEndOfFile()
+                    log("Launcher started")
+                }}
+
+                func log(_ message: String) {{
+                    let formatter = ISO8601DateFormatter()
+                    let timestamp = formatter.string(from: Date())
+                    let line = "[\\(timestamp)] \\(message)\\n"
+                    if let data = line.data(using: .utf8) {{
+                        logHandle?.write(data)
+                    }}
+                    fputs(line, stderr)
+                }}
+
+                func launchServer() {{
+                    guard let resourcePath = Bundle.main.resourcePath else {{
+                        log("Missing resources path")
+                        showCriticalAlert(title: "Launcher Error", message: "Unable to locate application resources.")
+                        NSApp.terminate(nil)
+                        return
+                    }}
+
+                    let pythonPath = (resourcePath as NSString).appendingPathComponent("venv/bin/python3")
+                    let runScriptPath = (resourcePath as NSString).appendingPathComponent("run.py")
+                    if !FileManager.default.isExecutableFile(atPath: pythonPath) {{
+                        log("Bundled interpreter not found at \\(pythonPath)")
+                        showCriticalAlert(title: "Launcher Error", message: "Bundled Python interpreter is missing.")
+                        NSApp.terminate(nil)
+                        return
+                    }}
+
+                    let process = Process()
+                    process.executableURL = URL(fileURLWithPath: pythonPath)
+                    process.arguments = [runScriptPath]
+                    process.currentDirectoryURL = URL(fileURLWithPath: resourcePath)
+
+                    var environment = ProcessInfo.processInfo.environment
+                    environment["PYTHONUNBUFFERED"] = "1"
+                    environment["WORD_GLOBAL_REPLACE_PARENT_PID"] = String(ProcessInfo.processInfo.processIdentifier)
+                    if !repoURL.isEmpty {{
+                        environment["WORD_GLOBAL_REPLACE_REPO_URL"] = repoURL
+                    }}
+                    process.environment = environment
+
+                    if let handle = logHandle {{
+                        process.standardOutput = handle
+                        process.standardError = handle
+                    }}
+
+                    do {{
+                        try process.run()
+                        log("Launched Python backend (pid: \\(process.processIdentifier))")
+                        task = process
+                        process.terminationHandler = {{ [weak self] proc in
+                            DispatchQueue.main.async {{
+                                self?.handleTermination(status: proc.terminationStatus)
+                            }}
+                        }}
+                    }} catch {{
+                        log("Failed to launch backend: \\(error.localizedDescription)")
+                        showCriticalAlert(title: "Unable to start application", message: error.localizedDescription)
+                        NSApp.terminate(nil)
+                    }}
+                }}
+
+                func stopServer(forceKill: Bool) {{
+                    guard let process = task else {{
+                        task = nil
+                        return
+                    }}
+
+                    if !process.isRunning {{
+                        task = nil
+                        return
+                    }}
+
+                    log("Stopping backend (forceKill: \\(forceKill))")
+                    process.terminate()
+                    if !waitForExit(process, timeout: 2.0) || forceKill {{
+                        if process.isRunning {{
+                            log("Backend still running; sending SIGKILL")
+                            kill(process.processIdentifier, SIGKILL)
+                            _ = waitForExit(process, timeout: 1.0)
+                        }}
+                    }}
+                    task = nil
+                }}
+
+                func waitForExit(_ process: Process, timeout: TimeInterval) -> Bool {{
+                    let deadline = Date().addingTimeInterval(timeout)
+                    while process.isRunning && Date() < deadline {{
+                        Thread.sleep(forTimeInterval: 0.1)
+                    }}
+                    return !process.isRunning
+                }}
+
+                func handleTermination(status: Int32) {{
+                    task = nil
+                    if isShuttingDown {{
+                        log("Backend exited with status \\(status) during shutdown")
+                        return
+                    }}
+                    log("Backend exited unexpectedly with status \\(status)")
+                    let alert = NSAlert()
+                    alert.alertStyle = .warning
+                    alert.messageText = "WordGlobalReplace backend stopped"
+                    alert.informativeText = "The embedded server exited with status code \\(status)."
+                    alert.addButton(withTitle: "Quit")
+                    alert.runModal()
+                    NSApp.terminate(nil)
+                }}
+
+                func showCriticalAlert(title: String, message: String) {{
+                    let alert = NSAlert()
+                    alert.alertStyle = .critical
+                    alert.messageText = title
+                    alert.informativeText = message
+                    alert.addButton(withTitle: "Quit")
+                    alert.runModal()
+                }}
+
+                @objc func openWebApp(_ sender: Any?) {{
+                    guard let url = URL(string: defaultURL) else {{
+                        log("Invalid URL: \\(defaultURL)")
+                        return
+                    }}
+                    NSWorkspace.shared.open(url)
+                }}
+
+                @objc func quitApp(_ sender: Any?) {{
+                    isShuttingDown = true
+                    stopServer(forceKill: true)
+                    NSApp.terminate(nil)
+                }}
+            }}
+            """
+        )
+
+        launcher_path = Path(macos_dir) / self.app_name
+        module_cache = Path(resources_dir) / "SwiftModuleCache"
+        module_cache.mkdir(parents=True, exist_ok=True)
+        env = os.environ.copy()
+        env["SWIFT_MODULE_CACHE_PATH"] = str(module_cache)
+
+        with tempfile.NamedTemporaryFile('w', suffix='.swift', delete=False) as temp_file:
+            temp_file.write(swift_source)
+            temp_path = Path(temp_file.name)
+
+        try:
+            subprocess.run(
+                [
+                    swiftc,
+                    "-O",
+                    "-parse-as-library",
+                    "-module-cache-path",
+                    str(module_cache),
+                    "-o",
+                    str(launcher_path),
+                    str(temp_path),
+                ],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=env,
+            )
+            launcher_path.chmod(0o755)
+            return True
+        except subprocess.CalledProcessError as exc:
+            logger.warning("Swift launcher compilation failed: %s", exc.stderr.strip() if exc.stderr else exc)
+            if launcher_path.exists():
+                launcher_path.unlink()
+            return False
+        finally:
+            try:
+                temp_path.unlink()
+            except Exception:
+                pass
     
     def _create_requirements_file(self, resources_dir):
         """Create a requirements file for the distribution"""
