@@ -63,6 +63,9 @@ class DistributionCreator:
             # Create installer script
             self._create_installer_script(resources_dir)
 
+            # Apply ad-hoc code signature so executables survive Gatekeeper checks
+            self._codesign_app(app_dir)
+
             # Create zip package
             self._create_zip_package(app_dir)
             
@@ -439,7 +442,22 @@ pathlib2==2.3.7; python_version < "3.4"
         if not framework_version:
             framework_version = f"{sys.version_info.major}.{sys.version_info.minor}"
 
-        relative_target = f"@loader_path/../{framework_name}.framework/Versions/{framework_version}/Python"
+        version_dir = framework_dir / "Versions" / framework_version
+        candidate_binaries = ["Python", "Python3"]
+        framework_binary = None
+        for candidate in candidate_binaries:
+            if (version_dir / candidate).exists():
+                framework_binary = candidate
+                break
+
+        if framework_binary is None:
+            logger.warning(
+                "Bundled Python framework missing executable in %s; skipping interpreter relink step",
+                version_dir,
+            )
+            return
+
+        relative_target = f"@loader_path/../{framework_name}.framework/Versions/{framework_version}/{framework_binary}"
 
         bin_dir = venv_path / "bin"
         if not bin_dir.exists():
@@ -578,14 +596,38 @@ echo "Tip: You can place WordGlobalReplace.app in /Applications for easy access.
         """Create a zip package for distribution"""
         zip_path = os.path.join(self.output_dir, f"{self.app_name}.zip")
         
+        app_basename = os.path.basename(app_dir.rstrip(os.sep))
+
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
             for root, dirs, files in os.walk(app_dir):
                 for file in files:
                     file_path = os.path.join(root, file)
-                    arc_path = os.path.relpath(file_path, app_dir)
+                    arc_path = os.path.join(app_basename, os.path.relpath(file_path, app_dir))
                     zipf.write(file_path, arc_path)
         
         logger.info(f"Created zip package: {zip_path}")
+
+    def _codesign_app(self, app_dir: str):
+        """Apply an ad-hoc code signature so modified binaries run without being killed."""
+        if sys.platform != "darwin":
+            return
+
+        try:
+            subprocess.run(
+                ["codesign", "--force", "--deep", "--sign", "-", app_dir],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            logger.info("Applied ad-hoc code signature to app bundle")
+        except FileNotFoundError:
+            logger.warning("codesign tool not available; app will run unsigned")
+        except subprocess.CalledProcessError as exc:
+            logger.warning(
+                "Failed to sign app bundle; unsigned executables may be blocked. Details: %s",
+                exc.stderr.strip() if exc.stderr else exc,
+            )
 
 def main():
     """Main function"""
