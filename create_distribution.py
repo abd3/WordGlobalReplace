@@ -12,6 +12,9 @@ import zipfile
 from pathlib import Path
 import logging
 import sysconfig
+import json
+import tempfile
+from typing import Optional
 
 from config import DEFAULT_LOCAL_URL, DEFAULT_REPO_URL, CF_BUNDLE_IDENTIFIER
 
@@ -19,10 +22,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class DistributionCreator:
-    def __init__(self, source_dir=None, output_dir="dist"):
+    def __init__(self, source_dir=None, output_dir="dist", python_executable=None):
         self.source_dir = source_dir or os.path.dirname(os.path.abspath(__file__))
         self.output_dir = output_dir
         self.app_name = "WordGlobalReplace"
+        self.requested_python = python_executable or os.environ.get("WORD_GLOBAL_REPLACE_BUILD_PYTHON")
+        self.python_context = None
         
     def create_distribution(self, repo_url=None):
         """Create a distributable package"""
@@ -62,6 +67,7 @@ class DistributionCreator:
 
             # Create installer script
             self._create_installer_script(resources_dir)
+            self._create_cli_launcher_script(resources_dir)
 
             # Apply ad-hoc code signature so executables survive Gatekeeper checks
             self._codesign_app(app_dir)
@@ -117,10 +123,16 @@ class DistributionCreator:
     <string>1.0</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon.icns</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.productivity</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
     <key>CFBundleExecutable</key>
     <string>{self.app_name}</string>
     <key>LSMinimumSystemVersion</key>
-    <string>10.14</string>
+    <string>10.9</string>
 </dict>
 </plist>
 '''
@@ -277,6 +289,205 @@ pathlib2==2.3.7; python_version < "3.4"
             f.write(requirements_content)
         logger.info("Created requirements file")
 
+    def _ensure_python_context(self):
+        if self.python_context is None:
+            self.python_context = self._prepare_python_context()
+        return self.python_context
+
+    def _prepare_python_context(self) -> dict:
+        """Select a Python interpreter (prefer universal) and gather metadata."""
+        best_target = None
+        for candidate in self._iter_python_candidates():
+            details = self._inspect_python(candidate)
+            if not details:
+                continue
+
+            rating = self._rank_python_candidate(details)
+            if best_target is None or rating < best_target[0]:
+                best_target = (rating, details)
+
+        if not best_target:
+            raise RuntimeError("Could not locate a usable Python interpreter for distribution bundling")
+
+        rating, selected = best_target
+        self._log_python_choice(selected, rating)
+        return selected
+
+    def _rank_python_candidate(self, details: dict):
+        """Return a sortable tuple ranking interpreters (lower is better)."""
+        archs = details.get('architectures', set())
+        is_universal = {'arm64', 'x86_64'}.issubset(archs)
+
+        deployment = details.get('deployment_target')
+        deployment_tuple = (99, 0)
+        if deployment:
+            try:
+                parts = [int(part) for part in str(deployment).split('.')]
+                if len(parts) == 1:
+                    parts.append(0)
+                deployment_tuple = (parts[0], parts[1])
+            except ValueError:
+                pass
+
+        # Prefer universal interpreters, then lowest deployment target, then newest version.
+        version = details.get('version', [0, 0, 0])
+        version_tuple = (version[0], version[1], version[2])
+
+        universal_score = 0 if is_universal else 1
+        return (universal_score, deployment_tuple, version_tuple, details.get('invocation_path', 'zzzz'))
+
+    def _log_python_choice(self, details: dict, rating):
+        archs = details.get('architectures', set())
+        deployment = details.get('deployment_target') or "unknown"
+        logger.info(
+            "Selected Python interpreter %s (architectures: %s, deployment target: %s)",
+            details.get('executable'),
+            ", ".join(sorted(archs)) if archs else "unknown",
+            deployment,
+        )
+        if not {'arm64', 'x86_64'}.issubset(archs):
+            logger.warning("Selected interpreter is not universal; Intel Macs may not be supported.")
+        try:
+            dep_major = int(str(deployment).split('.')[0])
+        except (ValueError, AttributeError):
+            dep_major = None
+        if dep_major and dep_major >= 14:
+            logger.warning(
+                "Selected interpreter requires macOS %s or newer. Older systems may fail to launch.",
+                deployment,
+            )
+
+    def _iter_python_candidates(self):
+        """Generate possible Python interpreter paths in order of preference."""
+        candidates = []
+        if self.requested_python:
+            candidates.append(Path(self.requested_python))
+
+        candidates.append(Path(sys.executable))
+        candidates.extend([
+            Path("/Library/Developer/CommandLineTools/usr/bin/python3"),
+            Path("/usr/bin/python3"),
+            Path("/Library/Frameworks/Python.framework/Versions/Current/bin/python3"),
+            Path("/Library/Frameworks/Python.framework/Versions/3.11/bin/python3"),
+        ])
+
+        seen = set()
+        for candidate in candidates:
+            try:
+                resolved = candidate.resolve(strict=False)
+            except (OSError, RuntimeError):
+                continue
+            key = str(resolved)
+            if key in seen:
+                continue
+            seen.add(key)
+            if candidate.exists():
+                yield candidate
+
+    def _inspect_python(self, path: Path) -> Optional[dict]:
+        """Collect interpreter metadata needed for bundling."""
+        try:
+            if not path.exists() or not os.access(path, os.X_OK):
+                return None
+
+            architectures = self._mach_architectures(path)
+
+            script = (
+                "import sys, sysconfig, json, os\n"
+                "info = {\n"
+                "  'executable': sys.executable,\n"
+                "  'real_executable': os.path.realpath(sys.executable),\n"
+                "  'version': [sys.version_info.major, sys.version_info.minor, sys.version_info.micro],\n"
+                "  'framework_name': sysconfig.get_config_var('PYTHONFRAMEWORK'),\n"
+                "  'framework_prefix': sysconfig.get_config_var('PYTHONFRAMEWORKPREFIX'),\n"
+                "  'base_prefix': getattr(sys, 'base_prefix', ''),\n"
+                "  'prefix': sys.prefix,\n"
+                "  'deployment_target': sysconfig.get_config_var('MACOSX_DEPLOYMENT_TARGET'),\n"
+                "}\n"
+                "print(json.dumps(info))\n"
+            )
+
+            output = subprocess.check_output([str(path), "-c", script], text=True)
+            metadata = json.loads(output)
+
+            version_major, version_minor, _ = metadata['version']
+            metadata['version_str'] = f"{version_major}.{version_minor}"
+            metadata['major'] = version_major
+            metadata['minor'] = version_minor
+            metadata['architectures'] = architectures
+            metadata['invocation_path'] = str(path)
+            return metadata
+        except subprocess.CalledProcessError as exc:
+            logger.debug("Failed to query Python interpreter %s: %s", path, exc)
+        except Exception as exc:
+            logger.debug("Error inspecting Python interpreter %s: %s", path, exc)
+        return None
+
+    def _mach_architectures(self, path: Path) -> set:
+        """Return the set of CPU architectures supported by a Mach-O binary."""
+        try:
+            output = subprocess.check_output(["file", str(path)], text=True).lower()
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return set()
+
+        archs = set()
+        if "arm64" in output:
+            archs.add("arm64")
+        if "x86_64" in output or "x86-64" in output:
+            archs.add("x86_64")
+        return archs
+
+    def _resolve_framework_info(self, resources_dir: str, python_info: dict) -> Optional[dict]:
+        configured_name = python_info.get('framework_name')
+        candidate_names = [name for name in [configured_name, "Python", "Python3"] if name]
+
+        framework_dir = None
+        framework_name = None
+        for name in candidate_names:
+            candidate = Path(resources_dir) / f"{name}.framework"
+            if candidate.exists():
+                framework_dir = candidate
+                framework_name = name
+                break
+
+        if framework_dir is None or framework_name is None:
+            logger.warning("Bundled Python framework not found; skipping framework-dependent steps")
+            return None
+
+        framework_version = python_info.get('version_str')
+        versions_dir = framework_dir / "Versions"
+        if versions_dir.exists():
+            for entry in versions_dir.iterdir():
+                name = entry.name
+                if name.lower() == "current":
+                    continue
+                framework_version = name
+                break
+
+        if not framework_version:
+            framework_version = python_info.get('version_str', f"{sys.version_info.major}.{sys.version_info.minor}")
+
+        version_dir = framework_dir / "Versions" / framework_version
+        candidate_binaries = ["Python", "Python3"]
+        framework_binary = None
+        for candidate in candidate_binaries:
+            if (version_dir / candidate).exists():
+                framework_binary = candidate
+                break
+
+        if framework_binary is None:
+            logger.warning("Framework executable missing in %s; skipping framework-dependent steps", version_dir)
+            return None
+
+        return {
+            "name": framework_name,
+            "dir": framework_dir,
+            "version": framework_version,
+            "version_dir": version_dir,
+            "binary_name": framework_binary,
+            "binary_path": version_dir / framework_binary,
+        }
+
     def _create_virtual_environment(self, resources_dir):
         """Create a self-contained virtual environment with dependencies"""
         venv_path = Path(resources_dir) / 'venv'
@@ -284,7 +495,17 @@ pathlib2==2.3.7; python_version < "3.4"
             shutil.rmtree(venv_path)
 
         logger.info("Creating bundled virtual environment")
-        python_executable = sys.executable
+        python_info = self._ensure_python_context()
+        python_executable = python_info['executable']
+        architectures = python_info.get('architectures', [])
+        if architectures:
+            logger.info(
+                "Using Python interpreter %s for bundling (architectures: %s)",
+                python_executable,
+                ", ".join(sorted(architectures)),
+            )
+        else:
+            logger.info("Using Python interpreter %s for bundling", python_executable)
         created_with_copies = True
         try:
             try:
@@ -334,34 +555,50 @@ pathlib2==2.3.7; python_version < "3.4"
             logger.info("Ensuring interpreter binaries are copied after symlink-based venv creation")
         self._solidify_python_binaries(venv_path)
 
-        self._bundle_python_runtime(venv_path, resources_dir)
-        self._relink_python_binaries(venv_path, resources_dir)
+        self._bundle_python_runtime(venv_path, resources_dir, python_info)
+        self._relink_python_binaries(venv_path, resources_dir, python_info)
+        self._normalize_deployment_targets(venv_path, resources_dir, python_info)
         logger.info("Bundled virtual environment ready")
 
-    def _bundle_python_runtime(self, venv_path: Path, resources_dir: str):
+    def _bundle_python_runtime(self, venv_path: Path, resources_dir: str, python_info: dict):
         """Copy the Python framework into the bundle so the app runs without a system Python"""
         if sys.platform != "darwin":
             logger.debug("Non-macOS platform detected; skipping Python framework bundling")
             return
 
-        framework_name = sysconfig.get_config_var('PYTHONFRAMEWORK') or "Python"
+        framework_name = python_info.get('framework_name') or "Python"
 
         candidate_paths = []
 
-        cfg_prefix = sysconfig.get_config_var('PYTHONFRAMEWORKPREFIX')
+        cfg_prefix = python_info.get('framework_prefix')
         if cfg_prefix:
             candidate_paths.append(Path(cfg_prefix) / f"{framework_name}.framework")
 
-        base_prefix = getattr(sys, 'base_prefix', '') or getattr(sys, 'prefix', '')
+        base_prefix = python_info.get('base_prefix') or python_info.get('prefix')
         if base_prefix:
             bp = Path(base_prefix)
-            # base_prefix typically ends with .../Python.framework/Versions/X.Y
             candidate_paths.append(bp.parent.parent)
 
+        real_executable = python_info.get('real_executable')
+        if real_executable:
+            resolved = Path(real_executable)
+            for parent in resolved.parents:
+                if parent.name.endswith(".framework"):
+                    candidate_paths.append(parent)
+                    framework_name = parent.name.replace(".framework", "")
+                    break
+
         source_framework = None
+        seen = set()
         for candidate in candidate_paths:
+            key = str(candidate)
+            if key in seen:
+                continue
+            seen.add(key)
             if candidate.exists():
                 source_framework = candidate
+                if candidate.name.endswith(".framework"):
+                    framework_name = candidate.name.replace(".framework", "")
                 break
         if source_framework is None:
             logger.warning(
@@ -378,8 +615,8 @@ pathlib2==2.3.7; python_version < "3.4"
         shutil.copytree(source_framework, destination, symlinks=False)
 
         # Ensure site-packages directory exists so relative symlinks remain valid even if source omitted it
-        version_dir = destination / "Versions" / f"{sys.version_info.major}.{sys.version_info.minor}"
-        site_packages = version_dir / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
+        version_dir = destination / "Versions" / python_info.get('version_str', f"{sys.version_info.major}.{sys.version_info.minor}")
+        site_packages = version_dir / "lib" / f"python{python_info.get('version_str', f'{sys.version_info.major}.{sys.version_info.minor}')}" / "site-packages"
         site_packages.mkdir(parents=True, exist_ok=True)
 
     def _solidify_python_binaries(self, venv_path: Path):
@@ -406,58 +643,17 @@ pathlib2==2.3.7; python_version < "3.4"
             except Exception as exc:
                 logger.warning(f"Failed to solidify interpreter {bin_path}: {exc}")
 
-    def _relink_python_binaries(self, venv_path: Path, resources_dir: str):
+    def _relink_python_binaries(self, venv_path: Path, resources_dir: str, python_info: dict):
         """Retarget Python interpreter binaries to the bundled framework so no system Python is required."""
         if sys.platform != "darwin":
             return
-
-        configured_name = sysconfig.get_config_var('PYTHONFRAMEWORK')
-        candidate_names = [
-            name for name in [configured_name, "Python", "Python3"] if name
-        ]
-
-        framework_dir = None
-        framework_name = None
-        for name in candidate_names:
-            candidate = Path(resources_dir) / f"{name}.framework"
-            if candidate.exists():
-                framework_dir = candidate
-                framework_name = name
-                break
-
-        if framework_dir is None or framework_name is None:
-            logger.warning("Bundled Python framework not found; skipping interpreter relink step")
+        framework_info = self._resolve_framework_info(resources_dir, python_info)
+        if not framework_info:
             return
-
-        versions_dir = framework_dir / "Versions"
-        framework_version = None
-        if versions_dir.exists():
-            for entry in versions_dir.iterdir():
-                name = entry.name
-                if name.lower() == "current":
-                    continue
-                framework_version = name
-                break
-
-        if not framework_version:
-            framework_version = f"{sys.version_info.major}.{sys.version_info.minor}"
-
-        version_dir = framework_dir / "Versions" / framework_version
-        candidate_binaries = ["Python", "Python3"]
-        framework_binary = None
-        for candidate in candidate_binaries:
-            if (version_dir / candidate).exists():
-                framework_binary = candidate
-                break
-
-        if framework_binary is None:
-            logger.warning(
-                "Bundled Python framework missing executable in %s; skipping interpreter relink step",
-                version_dir,
-            )
-            return
-
-        relative_target = f"@loader_path/../{framework_name}.framework/Versions/{framework_version}/{framework_binary}"
+        framework_name = framework_info['name']
+        framework_version = framework_info['version']
+        framework_binary = framework_info['binary_name']
+        relative_target = f"@loader_path/../../{framework_name}.framework/Versions/{framework_version}/{framework_binary}"
 
         bin_dir = venv_path / "bin"
         if not bin_dir.exists():
@@ -468,8 +664,8 @@ pathlib2==2.3.7; python_version < "3.4"
             "python",
             "python3",
             f"python{framework_version}",
-            f"python{sys.version_info.major}",
-            f"python{sys.version_info.major}.{sys.version_info.minor}",
+            f"python{python_info.get('major', sys.version_info.major)}",
+            f"python{python_info.get('major', sys.version_info.major)}.{python_info.get('minor', sys.version_info.minor)}",
         ]
         for name in binaries:
             bin_path = bin_dir / name
@@ -505,6 +701,111 @@ pathlib2==2.3.7; python_version < "3.4"
                     logger.info(f"Relinked {bin_path.name} to use bundled framework ({original_ref} -> {relative_target})")
                 except subprocess.CalledProcessError as exc:
                     logger.warning(f"Failed to relink interpreter {bin_path}: {exc.stderr.strip() if exc.stderr else exc}")
+
+    def _normalize_deployment_targets(self, venv_path: Path, resources_dir: str, python_info: dict):
+        """Ensure bundled binaries declare a deployment target compatible with older macOS versions."""
+        if sys.platform != "darwin":
+            return
+
+        desired = (10, 9)
+        framework_info = self._resolve_framework_info(resources_dir, python_info)
+        binaries = [
+            venv_path / "bin" / "python3",
+            venv_path / "bin" / "python",
+        ]
+        if framework_info:
+            binaries.append(framework_info['binary_path'])
+
+        for binary in binaries:
+            if binary.exists():
+                self._ensure_binary_deployment_target(binary, desired)
+            else:
+                logger.debug("Skipping deployment target normalization; %s not found", binary)
+
+    def _ensure_binary_deployment_target(self, binary_path: Path, desired: tuple[int, int]):
+        """Lower the declared macOS deployment target if needed."""
+        info = self._read_binary_build_info(binary_path)
+        if not info:
+            return
+
+        current = info.get('minos')
+        sdk = info.get('sdk') or f"{desired[0]}.{desired[1]}"
+
+        if current and self._compare_versions(self._parse_version(current), desired) <= 0:
+            return
+
+        desired_str = f"{desired[0]}.{desired[1]}"
+        logger.info(
+            "Adjusting deployment target for %s: %s -> %s",
+            binary_path,
+            current or "unknown",
+            desired_str,
+        )
+
+        try:
+            with tempfile.NamedTemporaryFile(delete=False) as tmp:
+                tmp_path = Path(tmp.name)
+            subprocess.run(
+                [
+                    "vtool",
+                    "-set-build-version",
+                    "macos",
+                    desired_str,
+                    sdk,
+                    "-output",
+                    str(tmp_path),
+                    str(binary_path),
+                ],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            shutil.move(tmp_path, binary_path)
+            binary_path.chmod(0o755)
+        except subprocess.CalledProcessError as exc:
+            logger.warning(
+                "Failed to adjust deployment target for %s: %s",
+                binary_path,
+                exc.stderr.strip() if exc.stderr else exc,
+            )
+        finally:
+            if 'tmp_path' in locals() and tmp_path.exists():
+                tmp_path.unlink(missing_ok=True)
+
+    def _read_binary_build_info(self, binary_path: Path) -> Optional[dict]:
+        try:
+            output = subprocess.check_output(
+                ["vtool", "-show-build", str(binary_path)],
+                text=True,
+                stderr=subprocess.PIPE,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+            logger.warning("Unable to read build info for %s: %s", binary_path, exc)
+            return None
+
+        minos = None
+        sdk = None
+        for line in output.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("minos "):
+                minos = stripped.split()[1]
+            elif stripped.startswith("sdk "):
+                sdk = stripped.split()[1]
+                if minos:
+                    break
+        return {"minos": minos, "sdk": sdk}
+
+    def _parse_version(self, version_str: str) -> tuple[int, int]:
+        parts = version_str.split(".")
+        major = int(parts[0]) if parts and parts[0].isdigit() else 0
+        minor = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+        return (major, minor)
+
+    def _compare_versions(self, a: tuple[int, int], b: tuple[int, int]) -> int:
+        if a == b:
+            return 0
+        return -1 if a < b else 1
     
     def _create_distribution_readme(self, resources_dir, repo_url):
         """Create README for the distribution"""
@@ -592,6 +893,30 @@ echo "Tip: You can place WordGlobalReplace.app in /Applications for easy access.
         os.chmod(installer_path, 0o755)
         logger.info("Created installer script")
     
+    def _create_cli_launcher_script(self, resources_dir: str):
+        """Create a CLI helper script that runs the bundled Python interpreter directly."""
+        script_content = """#!/bin/bash
+# WordGlobalReplace CLI launcher
+
+set -e
+
+RESOURCE_DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"
+PYTHON_BIN=\"$RESOURCE_DIR/venv/bin/python3\"
+RUN_SCRIPT=\"$RESOURCE_DIR/run.py\"
+
+if [ ! -x \"$PYTHON_BIN\" ]; then
+    echo \"Bundled Python interpreter not found; falling back to system python\" >&2
+    exec /usr/bin/env python3 \"$RUN_SCRIPT\" \"$@\"
+fi
+
+exec \"$PYTHON_BIN\" \"$RUN_SCRIPT\" \"$@\"
+"""
+
+        script_path = Path(resources_dir) / "run_cli.sh"
+        script_path.write_text(script_content, encoding="utf-8")
+        script_path.chmod(0o755)
+        logger.info("Created CLI launcher script")
+    
     def _create_zip_package(self, app_dir):
         """Create a zip package for distribution"""
         zip_path = os.path.join(self.output_dir, f"{self.app_name}.zip")
@@ -608,24 +933,68 @@ echo "Tip: You can place WordGlobalReplace.app in /Applications for easy access.
         logger.info(f"Created zip package: {zip_path}")
 
     def _codesign_app(self, app_dir: str):
-        """Apply an ad-hoc code signature so modified binaries run without being killed."""
+        """Apply ad-hoc signatures so bundled binaries run on other Macs."""
         if sys.platform != "darwin":
             return
 
         try:
-            subprocess.run(
-                ["codesign", "--force", "--deep", "--sign", "-", app_dir],
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-            logger.info("Applied ad-hoc code signature to app bundle")
+            resources_dir = Path(app_dir) / "Contents" / "Resources"
+            python_info = self._ensure_python_context()
+            framework_info = self._resolve_framework_info(str(resources_dir), python_info)
+
+            self._remove_existing_signatures(Path(app_dir))
+
+            if framework_info:
+                self._codesign_path(framework_info['binary_path'])
+                self._codesign_path(framework_info['version_dir'], deep=True)
+
+            venv_bin = Path(resources_dir) / "venv" / "bin"
+            binaries = [
+                "python",
+                "python3",
+                f"python{python_info.get('major', sys.version_info.major)}",
+                f"python{python_info.get('major', sys.version_info.major)}.{python_info.get('minor', sys.version_info.minor)}",
+            ]
+            for name in binaries:
+                candidate = venv_bin / name
+                if candidate.exists():
+                    self._codesign_path(candidate)
+
+            self._codesign_path(Path(app_dir), deep=True)
+            logger.info("Applied ad-hoc code signatures to bundled binaries")
         except FileNotFoundError:
             logger.warning("codesign tool not available; app will run unsigned")
         except subprocess.CalledProcessError as exc:
             logger.warning(
                 "Failed to sign app bundle; unsigned executables may be blocked. Details: %s",
+                exc.stderr.strip() if exc.stderr else exc,
+            )
+
+    def _remove_existing_signatures(self, root: Path):
+        for signature_dir in root.glob("**/_CodeSignature"):
+            try:
+                shutil.rmtree(signature_dir)
+            except Exception as exc:
+                logger.debug("Failed to remove old signature directory %s: %s", signature_dir, exc)
+
+    def _codesign_path(self, target: Path, deep: bool = False):
+        args = ["codesign", "--force"]
+        if deep:
+            args.append("--deep")
+        args.extend(["--sign", "-", str(target)])
+        try:
+            subprocess.run(
+                args,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            logger.debug("Code-signed %s", target)
+        except subprocess.CalledProcessError as exc:
+            logger.warning(
+                "Failed to sign %s: %s",
+                target,
                 exc.stderr.strip() if exc.stderr else exc,
             )
 
@@ -636,10 +1005,11 @@ def main():
     parser = argparse.ArgumentParser(description='Create WordGlobalReplace distribution')
     parser.add_argument('--repo-url', help='GitHub repository URL for auto-updates')
     parser.add_argument('--output-dir', default='dist', help='Output directory for distribution')
+    parser.add_argument('--python', dest='python_path', help='Python interpreter to use for building the bundle')
     
     args = parser.parse_args()
     
-    creator = DistributionCreator(output_dir=args.output_dir)
+    creator = DistributionCreator(output_dir=args.output_dir, python_executable=args.python_path)
     success = creator.create_distribution(repo_url=args.repo_url)
     
     if success:
