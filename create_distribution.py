@@ -332,6 +332,7 @@ pathlib2==2.3.7; python_version < "3.4"
         self._solidify_python_binaries(venv_path)
 
         self._bundle_python_runtime(venv_path, resources_dir)
+        self._relink_python_binaries(venv_path, resources_dir)
         logger.info("Bundled virtual environment ready")
 
     def _bundle_python_runtime(self, venv_path: Path, resources_dir: str):
@@ -401,6 +402,91 @@ pathlib2==2.3.7; python_version < "3.4"
                 logger.info(f"Replaced symlinked interpreter with copy: {bin_path}")
             except Exception as exc:
                 logger.warning(f"Failed to solidify interpreter {bin_path}: {exc}")
+
+    def _relink_python_binaries(self, venv_path: Path, resources_dir: str):
+        """Retarget Python interpreter binaries to the bundled framework so no system Python is required."""
+        if sys.platform != "darwin":
+            return
+
+        configured_name = sysconfig.get_config_var('PYTHONFRAMEWORK')
+        candidate_names = [
+            name for name in [configured_name, "Python", "Python3"] if name
+        ]
+
+        framework_dir = None
+        framework_name = None
+        for name in candidate_names:
+            candidate = Path(resources_dir) / f"{name}.framework"
+            if candidate.exists():
+                framework_dir = candidate
+                framework_name = name
+                break
+
+        if framework_dir is None or framework_name is None:
+            logger.warning("Bundled Python framework not found; skipping interpreter relink step")
+            return
+
+        versions_dir = framework_dir / "Versions"
+        framework_version = None
+        if versions_dir.exists():
+            for entry in versions_dir.iterdir():
+                name = entry.name
+                if name.lower() == "current":
+                    continue
+                framework_version = name
+                break
+
+        if not framework_version:
+            framework_version = f"{sys.version_info.major}.{sys.version_info.minor}"
+
+        relative_target = f"@loader_path/../{framework_name}.framework/Versions/{framework_version}/Python"
+
+        bin_dir = venv_path / "bin"
+        if not bin_dir.exists():
+            logger.warning("Virtual environment bin directory missing; skipping interpreter relink step")
+            return
+
+        binaries = [
+            "python",
+            "python3",
+            f"python{framework_version}",
+            f"python{sys.version_info.major}",
+            f"python{sys.version_info.major}.{sys.version_info.minor}",
+        ]
+        for name in binaries:
+            bin_path = bin_dir / name
+            if not bin_path.exists():
+                continue
+
+            try:
+                output = subprocess.check_output(["otool", "-L", str(bin_path)], text=True)
+            except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+                logger.warning(f"Unable to inspect interpreter {bin_path}: {exc}")
+                continue
+
+            framework_refs = []
+            for line in output.splitlines()[1:]:
+                candidate = line.strip().split(" ", 1)[0]
+                if framework_name in candidate:
+                    framework_refs.append(candidate)
+
+            if not framework_refs:
+                continue
+
+            for original_ref in framework_refs:
+                if original_ref == relative_target:
+                    continue
+                try:
+                    subprocess.run(
+                        ["install_name_tool", "-change", original_ref, relative_target, str(bin_path)],
+                        check=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                    )
+                    logger.info(f"Relinked {bin_path.name} to use bundled framework ({original_ref} -> {relative_target})")
+                except subprocess.CalledProcessError as exc:
+                    logger.warning(f"Failed to relink interpreter {bin_path}: {exc.stderr.strip() if exc.stderr else exc}")
     
     def _create_distribution_readme(self, resources_dir, repo_url):
         """Create README for the distribution"""

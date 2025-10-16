@@ -1,6 +1,7 @@
 # Exclusions for this project
 /Samples-tharpa
 
+
 # Generic Exclusions
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -15,6 +16,8 @@ __pycache__/
 build/
 develop-eggs/
 dist/
+dist_test/
+dist_universal/
 downloads/
 eggs/
 .eggs/
