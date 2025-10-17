@@ -1012,7 +1012,7 @@ pathlib2==2.3.7; python_version < "3.4"
             shutil.rmtree(destination)
 
         logger.info(f"Copying Python framework to bundle: {source_framework} -> {destination}")
-        shutil.copytree(source_framework, destination, symlinks=False)
+        shutil.copytree(source_framework, destination, symlinks=True)
 
         # Ensure site-packages directory exists so relative symlinks remain valid even if source omitted it
         version_dir = destination / "Versions" / python_info.get('version_str', f"{sys.version_info.major}.{sys.version_info.minor}")
