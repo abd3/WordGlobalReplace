@@ -41,18 +41,21 @@
                 </div>
             </div>
 
-            <div class="form-group">
-                <label for="context-chars">Context Characters:</label>
-                <input type="number" id="context-chars" value="150" min="50" max="500">
-                <small>Number of characters to show before and after each match</small>
-            </div>
-
             <div class="form-group checkbox-group">
                 <label class="checkbox-label" for="case-sensitive">
                     <input type="checkbox" id="case-sensitive">
                     Case Sensitive
                 </label>
-                <small>Match letter case exactly when finding text</small>
+                <span class="info-icon" tabindex="0" role="tooltip" aria-label="Match letter case exactly when finding text">
+                    <i class="fas fa-info-circle"></i>
+                    <span class="tooltip">Match letter case exactly when finding text</span>
+                </span>
+            </div>
+
+            <div class="form-group">
+                <label for="context-chars">Context Characters:</label>
+                <input type="number" id="context-chars" value="150" min="50" max="500">
+                <small>Number of characters to show before and after each match</small>
             </div>
 
             <button type="button" id="search-btn" class="btn btn-primary">

@@ -410,7 +410,7 @@ class LocalBuildSystem:
         publish=False,
         github_token=None,
         github_repo=None,
-        run_app=True,
+        run_app=False,
         version_bump="patch",
         prerelease=None,
         build_metadata=None,
