@@ -127,15 +127,19 @@ class WordGlobalReplaceLauncher:
             logger.info("Starting WordGlobalReplace application...")
             logger.info(f"Open your browser and go to: {DEFAULT_LOCAL_URL}")
             logger.info("Press Ctrl+C to stop the server")
+            skip_auto_browser = os.environ.get("WORD_GLOBAL_REPLACE_SKIP_BROWSER")
             
-            # Open browser automatically
-            def open_browser():
-                time.sleep(2)  # Wait for server to start
-                webbrowser.open(DEFAULT_LOCAL_URL)
-            
-            browser_thread = threading.Thread(target=open_browser)
-            browser_thread.daemon = True
-            browser_thread.start()
+            if skip_auto_browser:
+                logger.info("Skipping automatic browser launch (WORD_GLOBAL_REPLACE_SKIP_BROWSER set)")
+            else:
+                # Open browser automatically after server boots
+                def open_browser():
+                    time.sleep(2)  # Wait for server to start
+                    webbrowser.open(DEFAULT_LOCAL_URL)
+                
+                browser_thread = threading.Thread(target=open_browser)
+                browser_thread.daemon = True
+                browser_thread.start()
             
             # Run the Flask app
             app.run(debug=False, host=DEFAULT_HOST, port=DEFAULT_PORT)

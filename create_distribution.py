@@ -15,9 +15,12 @@ import sysconfig
 import json
 import tempfile
 import textwrap
+import platform
 from typing import Optional
 
 from config import DEFAULT_LOCAL_URL, DEFAULT_REPO_URL, CF_BUNDLE_IDENTIFIER
+
+MIN_MACOS_VERSION = os.getenv("WORD_GLOBAL_REPLACE_MIN_MACOS_VERSION", "11.0")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -180,7 +183,7 @@ class DistributionCreator:
     <key>CFBundleExecutable</key>
     <string>{self.app_name}</string>
     <key>LSMinimumSystemVersion</key>
-    <string>10.9</string>
+    <string>{MIN_MACOS_VERSION}</string>
 </dict>
 </plist>
 '''
@@ -286,6 +289,7 @@ timestamp() {
 echo \"[$(timestamp)] Starting WordGlobalReplace launcher\"
 
 export PYTHONUNBUFFERED=1
+export WORD_GLOBAL_REPLACE_SKIP_BROWSER=1
 export PYTHONPATH=\"$RESOURCE_DIR:${PYTHONPATH:-}\"
 export DYLD_FRAMEWORK_PATH=\"$RESOURCE_DIR:${DYLD_FRAMEWORK_PATH:-}\"
 
@@ -332,6 +336,9 @@ exec /usr/bin/env python3 run.py \"$@\"
         if not swiftc:
             logger.debug("swiftc compiler not available; falling back to shell launcher")
             return False
+
+        swift_targets = self._determine_swift_targets()
+        sdk_path = self._resolve_macos_sdk()
 
         swift_source = textwrap.dedent(
             f"""\
@@ -436,6 +443,7 @@ exec /usr/bin/env python3 run.py \"$@\"
 
                     var environment = ProcessInfo.processInfo.environment
                     environment["PYTHONUNBUFFERED"] = "1"
+                    environment["WORD_GLOBAL_REPLACE_SKIP_BROWSER"] = "1"
                     environment["WORD_GLOBAL_REPLACE_PARENT_PID"] = String(ProcessInfo.processInfo.processIdentifier)
                     if !repoURL.isEmpty {{
                         environment["WORD_GLOBAL_REPLACE_REPO_URL"] = repoURL
@@ -541,29 +549,70 @@ exec /usr/bin/env python3 run.py \"$@\"
         module_cache.mkdir(parents=True, exist_ok=True)
         env = os.environ.copy()
         env["SWIFT_MODULE_CACHE_PATH"] = str(module_cache)
+        env.setdefault("MACOSX_DEPLOYMENT_TARGET", MIN_MACOS_VERSION)
 
         with tempfile.NamedTemporaryFile('w', suffix='.swift', delete=False) as temp_file:
             temp_file.write(swift_source)
             temp_path = Path(temp_file.name)
 
+        build_outputs = []
         try:
-            subprocess.run(
-                [
+            targets = swift_targets or [None]
+            for target in targets:
+                arch = "host"
+                if target:
+                    arch = target.split("-", 1)[0]
+                else:
+                    arch = platform.machine().lower()
+                arch_output = launcher_path.with_name(f"{launcher_path.name}.{arch}")
+
+                cmd = [
                     swiftc,
                     "-O",
                     "-parse-as-library",
                     "-module-cache-path",
                     str(module_cache),
+                ]
+                if target:
+                    cmd.extend(["-target", target])
+                if sdk_path:
+                    cmd.extend(["-sdk", sdk_path])
+                cmd.extend([
                     "-o",
-                    str(launcher_path),
+                    str(arch_output),
                     str(temp_path),
-                ],
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                env=env,
-            )
+                ])
+
+                logger.info("Compiling Swift launcher for target %s", target or "default")
+                subprocess.run(
+                    cmd,
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=env,
+                )
+                build_outputs.append(arch_output)
+
+            if not build_outputs:
+                logger.warning("No Swift launcher artifacts were produced")
+                return False
+
+            if len(build_outputs) == 1:
+                shutil.move(build_outputs[0], launcher_path)
+            else:
+                lipo = shutil.which("lipo")
+                if not lipo:
+                    logger.warning("lipo not available; using first Swift launcher artifact only")
+                    shutil.move(build_outputs[0], launcher_path)
+                else:
+                    subprocess.run(
+                        [lipo, "-create", *[str(path) for path in build_outputs], "-output", str(launcher_path)],
+                        check=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                    )
             launcher_path.chmod(0o755)
             return True
         except subprocess.CalledProcessError as exc:
@@ -576,6 +625,51 @@ exec /usr/bin/env python3 run.py \"$@\"
                 temp_path.unlink()
             except Exception:
                 pass
+            for artifact in build_outputs:
+                try:
+                    if artifact.exists() and artifact != launcher_path:
+                        artifact.unlink()
+                except Exception:
+                    pass
+
+    def _determine_swift_targets(self) -> list:
+        env_targets = os.getenv("WORD_GLOBAL_REPLACE_SWIFT_TARGETS")
+        if env_targets:
+            targets = [target.strip() for target in env_targets.split(",") if target.strip()]
+            if targets:
+                return targets
+
+        single_target = os.getenv("WORD_GLOBAL_REPLACE_SWIFT_TARGET")
+        if single_target:
+            return [single_target]
+
+        host_arch = platform.machine().lower()
+        if host_arch in {"arm64", "aarch64"}:
+            return [
+                f"arm64-apple-macos{MIN_MACOS_VERSION}",
+                f"x86_64-apple-macos{MIN_MACOS_VERSION}",
+            ]
+        if host_arch == "x86_64":
+            # Building arm64 from Intel hosts is uncommon; prefer native architecture
+            return [f"x86_64-apple-macos{MIN_MACOS_VERSION}"]
+
+        # Fall back to letting swiftc auto-detect
+        return []
+
+    @staticmethod
+    def _resolve_macos_sdk() -> Optional[str]:
+        try:
+            result = subprocess.run(
+                ["xcrun", "--sdk", "macosx", "--show-sdk-path"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            sdk_path = result.stdout.strip()
+            return sdk_path or None
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            logger.debug("Unable to resolve macOS SDK path via xcrun; continuing without explicit -sdk")
+            return None
     
     def _create_requirements_file(self, resources_dir):
         """Create a requirements file for the distribution"""
