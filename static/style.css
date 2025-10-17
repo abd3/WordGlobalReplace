@@ -123,7 +123,7 @@ header p {
 .checkbox-group .info-icon {
     position: relative;
     display: inline-flex;
-    align-items: center;
+    align-items: start;
     justify-content: center;
     width: 22px;
     height: 22px;
