@@ -257,6 +257,8 @@ class WordFindReplace {
         const after = this.escapeHtml(contextAfter || '');
         return `${before}<mark class="highlight ${highlightClass}">${match}</mark>${after}`;
     }
+
+    async openFile(filePath) {
         if (!filePath) {
             this.showStatus('Missing file path to open', 'error');
             return;

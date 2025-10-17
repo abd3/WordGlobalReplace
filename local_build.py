@@ -483,7 +483,7 @@ def main():
     parser.add_argument('--github-repo', help='GitHub repository (owner/repo)')
     parser.add_argument('--skip-tests', action='store_true', help='Skip running tests')
     parser.add_argument('--skip-linting', action='store_true', help='Skip linting')
-    parser.add_argument('--skip-run-app', action='store_true', help='Skip launching the packaged app at the end of the build')
+    parser.add_argument('--run-app', action='store_true', help='Skip launching the packaged app at the end of the build')
     parser.add_argument('--version-bump', choices=['major', 'minor', 'patch', 'none'], default='patch',
                         help='Semantic version component to bump (default: patch)')
     parser.add_argument('--pre-release', help='Set semantic version pre-release identifier')
@@ -504,7 +504,7 @@ def main():
         publish=args.publish,
         github_token=args.github_token,
         github_repo=args.github_repo,
-        run_app=not args.skip_run_app,
+        run_app=args.run_app,
         version_bump=args.version_bump,
         prerelease=args.pre_release,
         build_metadata=args.build_metadata,

@@ -171,7 +171,7 @@ header p {
 }
 
 .results-table .file-name {
-    max-width: 300px;
+    max-width: 200px;
     word-break: break-word;
     white-space: normal;
 }
