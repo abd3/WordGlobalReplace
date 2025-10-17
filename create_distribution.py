@@ -545,10 +545,7 @@ exec /usr/bin/env python3 run.py \"$@\"
         )
 
         launcher_path = Path(macos_dir) / self.app_name
-        module_cache = Path(resources_dir) / "SwiftModuleCache"
-        module_cache.mkdir(parents=True, exist_ok=True)
         env = os.environ.copy()
-        env["SWIFT_MODULE_CACHE_PATH"] = str(module_cache)
         env.setdefault("MACOSX_DEPLOYMENT_TARGET", MIN_MACOS_VERSION)
 
         with tempfile.NamedTemporaryFile('w', suffix='.swift', delete=False) as temp_file:
@@ -557,42 +554,46 @@ exec /usr/bin/env python3 run.py \"$@\"
 
         build_outputs = []
         try:
-            targets = swift_targets or [None]
-            for target in targets:
-                arch = "host"
-                if target:
-                    arch = target.split("-", 1)[0]
-                else:
-                    arch = platform.machine().lower()
-                arch_output = launcher_path.with_name(f"{launcher_path.name}.{arch}")
+            with tempfile.TemporaryDirectory(prefix="swift-module-cache-") as module_cache_dir:
+                module_cache_path = Path(module_cache_dir)
+                env["SWIFT_MODULE_CACHE_PATH"] = str(module_cache_path)
 
-                cmd = [
-                    swiftc,
-                    "-O",
-                    "-parse-as-library",
-                    "-module-cache-path",
-                    str(module_cache),
-                ]
-                if target:
-                    cmd.extend(["-target", target])
-                if sdk_path:
-                    cmd.extend(["-sdk", sdk_path])
-                cmd.extend([
-                    "-o",
-                    str(arch_output),
-                    str(temp_path),
-                ])
+                targets = swift_targets or [None]
+                for target in targets:
+                    arch = "host"
+                    if target:
+                        arch = target.split("-", 1)[0]
+                    else:
+                        arch = platform.machine().lower()
+                    arch_output = launcher_path.with_name(f"{launcher_path.name}.{arch}")
 
-                logger.info("Compiling Swift launcher for target %s", target or "default")
-                subprocess.run(
-                    cmd,
-                    check=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    env=env,
-                )
-                build_outputs.append(arch_output)
+                    cmd = [
+                        swiftc,
+                        "-O",
+                        "-parse-as-library",
+                        "-module-cache-path",
+                        str(module_cache_path),
+                    ]
+                    if target:
+                        cmd.extend(["-target", target])
+                    if sdk_path:
+                        cmd.extend(["-sdk", sdk_path])
+                    cmd.extend([
+                        "-o",
+                        str(arch_output),
+                        str(temp_path),
+                    ])
+
+                    logger.info("Compiling Swift launcher for target %s", target or "default")
+                    subprocess.run(
+                        cmd,
+                        check=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        env=env,
+                    )
+                    build_outputs.append(arch_output)
 
             if not build_outputs:
                 logger.warning("No Swift launcher artifacts were produced")
