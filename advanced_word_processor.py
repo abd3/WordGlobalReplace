@@ -303,19 +303,32 @@ class AdvancedWordProcessor:
             doc = Document(working_path)
             replacements_made = 0
             
+            replacement_done = False
+
             # Replace in paragraphs
             for paragraph in doc.paragraphs:
                 if old_text in paragraph.text:
-                    paragraph.text = paragraph.text.replace(old_text, new_text)
+                    paragraph.text = paragraph.text.replace(old_text, new_text, 1)
                     replacements_made += 1
-            
-            # Replace in tables
-            for table in doc.tables:
-                for row in table.rows:
-                    for cell in row.cells:
-                        if old_text in cell.text:
-                            cell.text = cell.text.replace(old_text, new_text)
-                            replacements_made += 1
+                    replacement_done = True
+                    break
+
+            # Replace in tables only if not already replaced
+            if not replacement_done:
+                for table in doc.tables:
+                    table_replaced = False
+                    for row in table.rows:
+                        for cell in row.cells:
+                            if old_text in cell.text:
+                                cell.text = cell.text.replace(old_text, new_text, 1)
+                                replacements_made += 1
+                                replacement_done = True
+                                table_replaced = True
+                                break
+                        if table_replaced:
+                            break
+                    if table_replaced:
+                        break
             
             if replacements_made > 0:
                 # Save the edited document
