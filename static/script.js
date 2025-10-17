@@ -35,7 +35,10 @@ class WordFindReplace {
 
         // Global replace term should propagate to each row's replacement input
         const globalReplaceInput = document.getElementById('replace-term');
-        globalReplaceInput.addEventListener('input', () => this.updateRowReplacementValues(globalReplaceInput.value));
+        globalReplaceInput.addEventListener('input', () => {
+            const value = globalReplaceInput.value;
+            this.updateRowReplacementValues(value);
+        });
     }
 
     async openDirectoryPicker() {
@@ -178,9 +181,13 @@ class WordFindReplace {
         resultsDiv.style.display = 'block';
 
         // After rendering rows, initialize replacement inputs from global Replace field if provided
-        const globalReplace = document.getElementById('replace-term').value.trim();
+        const globalReplace = document.getElementById('replace-term').value;
         if (globalReplace) {
             this.updateRowReplacementValues(globalReplace);
+        } else {
+            this.currentResults.forEach(occurrence => {
+                occurrence.replacement_text = occurrence.replacement_text || occurrence.match_text;
+            });
         }
     }
 
@@ -200,8 +207,9 @@ class WordFindReplace {
         const displayFileName = this.escapeHtml(fileName);
         const displayFilePath = this.escapeHtml(occurrence.file_path);
         
-        const globalReplace = document.getElementById('replace-term').value.trim();
-        const initialReplacement = globalReplace || occurrence.match_text;
+        const globalReplace = document.getElementById('replace-term').value;
+        const initialReplacement = globalReplace !== '' ? globalReplace : (occurrence.replacement_text || occurrence.match_text);
+        occurrence.replacement_text = initialReplacement;
 
         row.innerHTML = `
             <td>
@@ -218,7 +226,8 @@ class WordFindReplace {
             <td class="replacement-cell">
                 <input type="text" class="replacement-input" 
                        value="${initialReplacement}" 
-                       data-original="${occurrence.match_text}">
+                       data-original="${occurrence.match_text}"
+                       data-index="${index}">
             </td>
             <td>
                 <button class="btn btn-sm btn-primary replace-single-btn" 
@@ -243,6 +252,17 @@ class WordFindReplace {
         
         const checkbox = row.querySelector('.occurrence-checkbox');
         checkbox.addEventListener('change', () => this.updateSelectAllState());
+
+        const replacementInput = row.querySelector('.replacement-input');
+        replacementInput.addEventListener('input', () => {
+            occurrence.replacement_text = replacementInput.value;
+        });
+        replacementInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                this.replaceSingle(index);
+            }
+        });
         
         row.dataset.contextBefore = contextBefore;
         row.dataset.contextAfter = contextAfter;
@@ -324,7 +344,7 @@ class WordFindReplace {
                 },
                 body: JSON.stringify({
                     file_path: occurrence.file_path,
-                    old_text: occurrence.match_text,
+                    old_text: occurrence.original_match_text || occurrence.match_text,
                     new_text: newText,
                     occurrence_id: occurrence.id
                 })
@@ -424,6 +444,7 @@ class WordFindReplace {
             occurrence.context_after = contextAfter;
             occurrence.full_context = `${contextBefore}${newText}${contextAfter}`;
             occurrence.match_text = newText;
+            occurrence.original_match_text = newText;
             occurrence.replacement_text = newText;
         }
 
@@ -483,6 +504,9 @@ class WordFindReplace {
         const inputs = document.querySelectorAll('.replacement-input');
         inputs.forEach(input => {
             input.value = value;
+        });
+        this.currentResults.forEach(occurrence => {
+            occurrence.replacement_text = value;
         });
     }
 

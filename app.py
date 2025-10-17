@@ -142,6 +142,7 @@ def search_documents():
             for i, occurrence in enumerate(results['occurrences']):
                 occurrence['id'] = f"occ_{i}_{hash(occurrence['file_path'] + str(occurrence['start_pos']))}"
                 occurrence['replacement_text'] = occurrence['match_text']  # Initialize with original text
+                occurrence['original_match_text'] = occurrence['match_text']
         
         return jsonify(results)
         
@@ -198,7 +199,7 @@ def replace_all():
         
         for occurrence in occurrences:
             file_path = occurrence.get('file_path')
-            old_text = occurrence.get('match_text')
+            old_text = occurrence.get('original_match_text') or occurrence.get('match_text')
             new_text = occurrence.get('replacement_text')
             
             if file_path and old_text and new_text:
