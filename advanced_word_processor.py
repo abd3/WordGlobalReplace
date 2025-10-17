@@ -180,7 +180,13 @@ class AdvancedWordProcessor:
             except Exception:
                 pass
     
-    def find_occurrences_with_context(self, file_path: str, search_term: str, context_chars: int = 150) -> List[Dict]:
+    def find_occurrences_with_context(
+        self,
+        file_path: str,
+        search_term: str,
+        context_chars: int = 150,
+        case_sensitive: bool = False
+    ) -> List[Dict]:
         """
         Find all occurrences with enhanced context and metadata
         
@@ -192,7 +198,8 @@ class AdvancedWordProcessor:
             return []
         
         occurrences = []
-        search_pattern = re.compile(re.escape(search_term), re.IGNORECASE)
+        flags = 0 if case_sensitive else re.IGNORECASE
+        search_pattern = re.compile(re.escape(search_term), flags)
         
         for match in search_pattern.finditer(doc_structure['full_text']):
             start_pos = match.start()
@@ -345,13 +352,20 @@ class AdvancedWordProcessor:
         
         return result
     
-    def scan_document_advanced(self, file_path: str, search_term: str, context_chars: int = 150) -> Dict[str, Any]:
+    def scan_document_advanced(
+        self,
+        file_path: str,
+        search_term: str,
+        context_chars: int = 150,
+        case_sensitive: bool = False
+    ) -> Dict[str, Any]:
         """Scan a single document using the advanced processor."""
         result: Dict[str, Any] = {
             'success': False,
             'file_path': file_path,
             'occurrences': [],
-            'error': None
+            'error': None,
+            'case_sensitive': case_sensitive
         }
 
         try:
@@ -363,17 +377,29 @@ class AdvancedWordProcessor:
                 result['error'] = "Unsupported file type"
                 return result
 
-            occurrences = self.find_occurrences_with_context(file_path, search_term, context_chars)
+            occurrences = self.find_occurrences_with_context(
+                file_path,
+                search_term,
+                context_chars,
+                case_sensitive=case_sensitive
+            )
             result['occurrences'] = occurrences
+            result['case_sensitive'] = case_sensitive
             result['success'] = True
             return result
         except Exception as exc:
             result['error'] = str(exc)
             logger.error(f"Error scanning document {file_path}: {exc}")
+            result['case_sensitive'] = case_sensitive
             return result
 
-    def scan_directory_advanced(self, directory_path: str, search_term: str, 
-                              context_chars: int = 150) -> Dict[str, Any]:
+    def scan_directory_advanced(
+        self,
+        directory_path: str,
+        search_term: str,
+        context_chars: int = 150,
+        case_sensitive: bool = False
+    ) -> Dict[str, Any]:
         """
         Advanced directory scanning with detailed results
         
@@ -389,7 +415,8 @@ class AdvancedWordProcessor:
                 'files_scanned': 0,
                 'files_processed': 0,
                 'total_occurrences': 0,
-                'occurrences': []
+                'occurrences': [],
+                'case_sensitive': case_sensitive
             }
         
         # Find all Word files
@@ -404,7 +431,12 @@ class AdvancedWordProcessor:
         
         for file_path in word_files:
             if self.is_word_file(str(file_path)):
-                occurrences = self.find_occurrences_with_context(str(file_path), search_term, context_chars)
+                occurrences = self.find_occurrences_with_context(
+                    str(file_path),
+                    search_term,
+                    context_chars,
+                    case_sensitive=case_sensitive
+                )
                 if occurrences:
                     files_with_matches += 1
                     all_occurrences.extend(occurrences)
@@ -418,7 +450,8 @@ class AdvancedWordProcessor:
             'total_occurrences': len(all_occurrences),
             'occurrences': all_occurrences,
             'search_term': search_term,
-            'directory': str(directory)
+            'directory': str(directory),
+            'case_sensitive': case_sensitive
         }
     
     def export_results(self, results: Dict[str, Any], output_file: str = "search_results.json"):
@@ -463,5 +496,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

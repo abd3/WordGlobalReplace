@@ -6,6 +6,8 @@
 class WordFindReplace {
     constructor() {
         this.currentResults = [];
+        this.caseSensitiveCheckbox = document.getElementById('case-sensitive');
+        this.lastSearchCaseSensitive = false;
         this.initializeEventListeners();
     }
 
@@ -110,6 +112,7 @@ class WordFindReplace {
         const directory = document.getElementById('directory').value.trim();
         const searchTerm = document.getElementById('search-term').value.trim();
         const contextChars = parseInt(document.getElementById('context-chars').value);
+        const caseSensitive = this.caseSensitiveCheckbox?.checked || false;
         
         if (!directory || !searchTerm) {
             this.showStatus('Please enter both directory and search term', 'error');
@@ -128,13 +131,17 @@ class WordFindReplace {
                 body: JSON.stringify({
                     directory,
                     search_term: searchTerm,
-                    context_chars: contextChars
+                    context_chars: contextChars,
+                    case_sensitive: caseSensitive
                 })
             });
 
             const result = await response.json();
             
             if (result.success) {
+                this.lastSearchCaseSensitive = Boolean(
+                    result.case_sensitive !== undefined ? result.case_sensitive : caseSensitive
+                );
                 this.currentResults = result.occurrences;
                 this.displaySearchResults(result);
                 this.showStatus(`Found ${result.total_occurrences} occurrences in ${result.files_with_matches} files`, 'success');
@@ -163,7 +170,7 @@ class WordFindReplace {
         
         // Populate results table
         result.occurrences.forEach((occurrence, index) => {
-            const row = this.createResultRow(occurrence, index);
+            const row = this.createResultRow(occurrence, index, this.lastSearchCaseSensitive);
             tbody.appendChild(row);
         });
         
@@ -177,7 +184,7 @@ class WordFindReplace {
         }
     }
 
-    createResultRow(occurrence, index) {
+    createResultRow(occurrence, index, caseSensitive = false) {
         const row = document.createElement('tr');
         row.dataset.occurrenceId = occurrence.id;
         
@@ -186,8 +193,11 @@ class WordFindReplace {
         const highlightedContext = this.renderHighlightedContext(
             contextSnapshot,
             occurrence.match_text,
-            'highlight-original'
+            'highlight-original',
+            caseSensitive
         );
+        const displayFileName = this.escapeHtml(fileName);
+        const displayFilePath = this.escapeHtml(occurrence.file_path);
         
         const globalReplace = document.getElementById('replace-term').value.trim();
         const initialReplacement = globalReplace || occurrence.match_text;
@@ -196,8 +206,10 @@ class WordFindReplace {
             <td>
                 <input type="checkbox" class="occurrence-checkbox" data-index="${index}">
             </td>
-            <td class="file-name" title="${occurrence.file_path}">
-                ${fileName}
+            <td class="file-name" title="${displayFilePath}">
+                <button type="button" class="file-open-link" data-file-path="${displayFilePath}">
+                    ${displayFileName}
+                </button>
             </td>
             <td class="context-cell">
                 <div class="context-text">${highlightedContext}</div>
@@ -218,6 +230,15 @@ class WordFindReplace {
         // Add event listeners
         const replaceBtn = row.querySelector('.replace-single-btn');
         replaceBtn.addEventListener('click', () => this.replaceSingle(index));
+
+        const fileLink = row.querySelector('.file-open-link');
+        if (fileLink) {
+            fileLink.addEventListener('click', (event) => {
+                event.preventDefault();
+                const path = occurrence.file_path;
+                this.openFile(path);
+            });
+        }
         
         const checkbox = row.querySelector('.occurrence-checkbox');
         checkbox.addEventListener('change', () => this.updateSelectAllState());
@@ -228,17 +249,60 @@ class WordFindReplace {
         return row;
     }
 
-    renderHighlightedContext(context, searchTerm, highlightClass = 'highlight-original') {
+    renderHighlightedContext(context, searchTerm, highlightClass = 'highlight-original', caseSensitive = false) {
         const safeContext = context || '';
         if (!searchTerm) {
             return safeContext;
         }
-        const regex = new RegExp(`(${this.escapeRegExp(searchTerm)})`, 'gi');
+        const flags = caseSensitive ? 'g' : 'gi';
+        const regex = new RegExp(`(${this.escapeRegExp(searchTerm)})`, flags);
         return safeContext.replace(regex, `<mark class="highlight ${highlightClass}">$1</mark>`);
+    }
+
+    async openFile(filePath) {
+        if (!filePath) {
+            this.showStatus('Missing file path to open', 'error');
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/open_file', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ file_path: filePath })
+            });
+
+            const result = await response.json();
+
+            if (response.ok && result.success) {
+                const parts = filePath.split(/[/\\]/);
+                const name = parts[parts.length - 1] || filePath;
+                this.showStatus(`Opening ${name}...`, 'info');
+            } else {
+                const error = result && result.error ? result.error : 'Unable to open file';
+                this.showStatus(error, 'error');
+            }
+        } catch (error) {
+            this.showStatus('Error launching file', 'error');
+        }
     }
 
     escapeRegExp(string) {
         return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    escapeHtml(value) {
+        if (value === undefined || value === null) {
+            return '';
+        }
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     async replaceSingle(index) {
@@ -371,7 +435,7 @@ class WordFindReplace {
 
         const contextDiv = row.querySelector('.context-text');
         if (contextDiv) {
-            contextDiv.innerHTML = this.renderHighlightedContext(updatedContext, newText, 'highlight-replaced');
+            contextDiv.innerHTML = this.renderHighlightedContext(updatedContext, newText, 'highlight-replaced', true);
         }
 
         const replacementInput = row.querySelector('.replacement-input');

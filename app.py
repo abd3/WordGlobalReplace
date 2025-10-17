@@ -14,6 +14,7 @@ from pathlib import Path
 import logging
 from advanced_word_processor import AdvancedWordProcessor
 from config import DEFAULT_HOST, DEFAULT_PORT
+import shutil
 
 try:
     import tkinter as tk
@@ -53,6 +54,20 @@ def _select_directory_with_applescript():
     )
     return result.stdout.strip()
 
+
+def _open_file_with_default_app(file_path: str) -> None:
+    """Open a file using the system default application."""
+    if sys.platform.startswith("darwin"):
+        subprocess.Popen(["open", file_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    elif os.name == "nt":
+        os.startfile(file_path)  # type: ignore[attr-defined]
+    else:
+        opener = shutil.which("xdg-open")
+        if opener:
+            subprocess.Popen([opener, file_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            raise RuntimeError("xdg-open not available to open files")
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -76,6 +91,7 @@ def search_documents():
         directory = data.get('directory', '')
         search_term = data.get('search_term', '')
         context_chars = int(data.get('context_chars', 150))
+        case_sensitive = bool(data.get('case_sensitive', False))
         
         if not directory or not search_term:
             return jsonify({
@@ -91,7 +107,13 @@ def search_documents():
             }), 400
         
         # Perform the search
-        results = word_processor.scan_directory_advanced(directory, search_term, context_chars)
+        results = word_processor.scan_directory_advanced(
+            directory,
+            search_term,
+            context_chars,
+            case_sensitive=case_sensitive
+        )
+        results['case_sensitive'] = case_sensitive
         
         if results['success']:
             # Add unique IDs to each occurrence for tracking
@@ -180,6 +202,31 @@ def replace_all():
             'success': False,
             'error': str(e)
         }), 500
+
+@app.route('/api/open_file', methods=['POST'])
+def open_file():
+    """API endpoint to open a file with the system default application."""
+    try:
+        data = request.get_json() or {}
+        file_path = data.get('file_path')
+
+        if not file_path:
+            return jsonify({'success': False, 'error': 'File path is required'}), 400
+
+        resolved_path = Path(file_path)
+        if not resolved_path.exists():
+            return jsonify({'success': False, 'error': f'File {file_path} does not exist'}), 404
+
+        try:
+            _open_file_with_default_app(str(resolved_path))
+        except Exception as exc:
+            logger.error(f"Failed to open file {file_path}: {exc}")
+            return jsonify({'success': False, 'error': str(exc)}), 500
+
+        return jsonify({'success': True})
+    except Exception as exc:
+        logger.error(f"Error in open_file endpoint: {exc}")
+        return jsonify({'success': False, 'error': str(exc)}), 500
 
 @app.route('/api/validate_directory', methods=['POST'])
 def validate_directory():

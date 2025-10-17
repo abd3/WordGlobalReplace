@@ -143,5 +143,31 @@ class TestAdvancedWordProcessor(unittest.TestCase):
             self.assertIsInstance(occurrence['context'], str)
             self.assertGreater(len(occurrence['context']), 0)
 
+    def test_case_sensitive_search(self):
+        """Ensure case sensitivity flag alters search results"""
+        if not hasattr(self, 'test_doc_path'):
+            self.skipTest("Test document not created")
+
+        insensitive = self.processor.scan_document_advanced(
+            self.test_doc_path,
+            'Test',
+            50,
+            case_sensitive=False
+        )
+        sensitive = self.processor.scan_document_advanced(
+            self.test_doc_path,
+            'Test',
+            50,
+            case_sensitive=True
+        )
+
+        if insensitive['success'] and sensitive['success']:
+            self.assertGreater(len(insensitive['occurrences']), 0)
+            self.assertGreater(len(insensitive['occurrences']), len(sensitive['occurrences']))
+            self.assertTrue(
+                any(match['match_text'].islower() for match in insensitive['occurrences']),
+                "Insensitive search should capture lowercase variants"
+            )
+
 if __name__ == '__main__':
     unittest.main()

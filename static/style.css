@@ -99,6 +99,50 @@ header p {
     font-size: 14px;
 }
 
+.checkbox-group {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.checkbox-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-weight: 600;
+    color: #555;
+}
+
+.checkbox-group input[type="checkbox"] {
+    width: auto;
+    height: 18px;
+    margin: 0;
+}
+
+.results-table .file-name {
+    max-width: 200px;
+    word-break: break-word;
+    white-space: normal;
+}
+
+.file-open-link {
+    background: none;
+    border: none;
+    color: #667eea;
+    text-decoration: underline;
+    cursor: pointer;
+    padding: 0;
+    font: inherit;
+    text-align: left;
+}
+
+.file-open-link:hover,
+.file-open-link:focus {
+    color: #764ba2;
+    outline: none;
+}
+
 /* Button Styles */
 .btn {
     padding: 12px 24px;
