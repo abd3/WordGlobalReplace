@@ -96,6 +96,7 @@ class DistributionCreator:
             'auto_updater.py',
             'launcher.py',
             'config.py',
+            '.version',
             'templates/',
             'static/',
             'Samples/'

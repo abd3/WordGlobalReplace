@@ -75,13 +75,35 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-here'  # Change this in production
 
+# Load version information once
+def _load_app_version():
+    env_version = os.getenv("WORD_GLOBAL_REPLACE_VERSION")
+    if env_version:
+        return env_version.strip()
+
+    candidate_paths = [
+        Path(__file__).parent / ".version",
+        Path(__file__).parent.parent / ".version",
+    ]
+    for candidate in candidate_paths:
+        try:
+            if candidate.exists():
+                contents = candidate.read_text(encoding="utf-8").strip()
+                if contents:
+                    return contents
+        except OSError:
+            continue
+    return "dev"
+
+APP_VERSION = _load_app_version()
+
 # Initialize the word processor
 word_processor = AdvancedWordProcessor()
 
 @app.route('/')
 def index():
     """Main page with the find and replace interface"""
-    return render_template('index.html')
+    return render_template('index.html', app_version=APP_VERSION)
 
 @app.route('/api/search', methods=['POST'])
 def search_documents():
